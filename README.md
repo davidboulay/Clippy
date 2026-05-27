@@ -61,43 +61,47 @@ open the panel without any forbidden hotkey grab.
 
 ## Install
 
-### Packages (recommended)
+### Ubuntu / Pop!_OS / Debian — recommended
 
-Build outputs land in `dist/`. See [`packaging/README.md`](packaging/README.md)
-for details and trade-offs.
+Download the latest `clippy_*.deb` from the
+**[Releases page](https://github.com/davidboulay/clippy/releases/latest)**, then:
 
 ```bash
-make deb        # Ubuntu/Pop!_OS/Debian — no network/sudo to build
-sudo apt install ./dist/clippy_0.2.0_all.deb
-
-make arch       # Arch/Manjaro (PKGBUILD)
-make flatpak    # other distros (needs Flathub; tray/sandbox caveats)
-make appimage   # experimental
+sudo apt install ./clippy_0.2.1_all.deb
 ```
 
-| Format | Best for | Status |
-|--------|----------|--------|
-| `.deb` | Ubuntu / Pop!_OS / Debian | recommended |
-| Arch PKGBUILD | Arch / Manjaro | supported |
-| AppImage | portable single file | experimental |
-| Flatpak | non-sandboxed compositors only | ❌ broken on COSMIC |
+…or fetch it from the terminal with the GitHub CLI:
 
-**Flatpak / COSMIC Store:** not viable for Clippy. COSMIC (`cosmic-comp`)
-withholds the privileged `layer-shell` and `data-control` Wayland protocols from
-Flatpak-sandboxed apps (Wayland security-context), which Clippy's panel and
-clipboard watching depend on — so a Flatpak install can't function on COSMIC.
-Details in [`FLATHUB.md`](FLATHUB.md). Use the `.deb` (or AUR) instead.
+```bash
+gh release download --repo davidboulay/clippy --pattern '*.deb'
+sudo apt install ./clippy_*.deb
+```
+
+`apt` pulls in the dependencies automatically. Then launch **Clippy** from your
+app list and open **Settings** to bind a shortcut (see below).
+
+### Other distributions
+
+- **Arch / Manjaro:** `cd packaging/arch && makepkg -si`
+- **AppImage** (experimental, any distro): `make appimage`, then run `dist/Clippy-*.AppImage`
+- **Flatpak / COSMIC Store:** ❌ not viable — COSMIC withholds the privileged
+  `layer-shell` and `data-control` Wayland protocols from Flatpak-sandboxed
+  apps, which Clippy's panel and clipboard watching require. Details in
+  [`FLATHUB.md`](FLATHUB.md).
 
 ### From source
 
 ```bash
-cd paste-linux       # the project folder
+git clone https://github.com/davidboulay/clippy.git
+cd clippy
 ./scripts/install.sh
 ```
 
-The script (asks for `sudo` once) installs the dependencies, a `~/.local/bin/clippy`
-launcher and the icon, enables autostart, and starts the daemon. A paperclip
-should appear in your COSMIC panel.
+`install.sh` (asks for `sudo` once) installs the dependencies, a
+`~/.local/bin/clippy` launcher and icon, enables autostart, and starts the
+daemon — a paperclip should appear in your COSMIC panel. To build a `.deb`
+yourself instead: `make deb`, then `sudo apt install ./dist/clippy_*.deb` (see
+[`packaging/README.md`](packaging/README.md)).
 
 Dependencies: `wl-clipboard`, `python3-gi`, `gir1.2-gtk-3.0`,
 `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
