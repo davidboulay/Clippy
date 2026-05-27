@@ -77,14 +77,16 @@ make appimage   # experimental
 
 | Format | Best for | Status |
 |--------|----------|--------|
-| `.deb` | Ubuntu / Pop!_OS / Debian | recommended on your system |
+| `.deb` | Ubuntu / Pop!_OS / Debian | recommended |
 | Arch PKGBUILD | Arch / Manjaro | supported |
-| Flatpak | other distros | works, with sandbox caveats |
 | AppImage | portable single file | experimental |
+| Flatpak | non-sandboxed compositors only | ❌ broken on COSMIC |
 
-**COSMIC Store / Flathub:** the COSMIC Store is a storefront over Flathub, so
-publishing the Flatpak to Flathub lists Clippy in the Store. App ID
-`io.github.davidboulay.Clippy`; submission steps are in [`FLATHUB.md`](FLATHUB.md).
+**Flatpak / COSMIC Store:** not viable for Clippy. COSMIC (`cosmic-comp`)
+withholds the privileged `layer-shell` and `data-control` Wayland protocols from
+Flatpak-sandboxed apps (Wayland security-context), which Clippy's panel and
+clipboard watching depend on — so a Flatpak install can't function on COSMIC.
+Details in [`FLATHUB.md`](FLATHUB.md). Use the `.deb` (or AUR) instead.
 
 ### From source
 
