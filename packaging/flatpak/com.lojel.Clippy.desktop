@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Clippy
+GenericName=Clipboard Manager
+Comment=Show your clipboard history
+Exec=clippy toggle
+Icon=com.lojel.Clippy
+Terminal=false
+Categories=Utility;GTK;
+Keywords=clipboard;history;paste;copy;
+StartupNotify=false

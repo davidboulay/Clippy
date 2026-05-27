@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Build artifacts (attached to GitHub Releases, not committed)
+/dist/
+/build/
+*.deb
+*.AppImage
+packaging/flatpak/build-dir/
+packaging/flatpak/.flatpak-builder/
+
+# Local editor / harness config
+.claude/
+.vscode/
+.idea/
+
+# Scratch / screenshots
+Pasted Image.png
+*.tmp

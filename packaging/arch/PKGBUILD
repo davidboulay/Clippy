@@ -1,0 +1,45 @@
+# Maintainer: David Boulay <david.boulay@lojel.com>
+# Builds Clippy from the local repository tree (run `makepkg` from this dir).
+pkgname=clippy
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Clipboard history panel for Wayland (COSMIC/wlroots)"
+arch=('any')
+url="https://github.com/lojel/clippy"
+license=('MIT')
+depends=('python' 'python-gobject' 'gtk3' 'gtk-layer-shell'
+         'libayatana-appindicator' 'wl-clipboard')
+optdepends=('pipewire: copy sound effect (pw-play)'
+            'libpulse: copy sound effect (paplay)')
+
+_repo="$startdir/../.."
+
+package() {
+    local site
+    site="$(python3 -c 'import site; print(site.getsitepackages()[0])')"
+    install -dm755 "$pkgdir$site"
+    cp -r "$_repo/clippy" "$pkgdir$site/clippy"
+    find "$pkgdir$site/clippy" -name '__pycache__' -type d -prune -exec rm -rf {} + || true
+
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/clippy" <<'EOF'
+#!/bin/sh
+exec python3 -m clippy "$@"
+EOF
+
+    for s in 16 24 32 48 64 128 256 512; do
+        install -dm755 "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps"
+        python3 - "$_repo/clippy/icons/clippy.png" \
+            "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/clippy.png" "$s" <<'PY'
+import sys, gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
+s = int(sys.argv[3])
+GdkPixbuf.Pixbuf.new_from_file_at_scale(sys.argv[1], s, s, True).savev(sys.argv[2], "png", [], [])
+PY
+    done
+
+    install -Dm644 "$_repo/packaging/flatpak/com.lojel.Clippy.desktop" \
+        "$pkgdir/usr/share/applications/clippy.desktop"
+    sed -i 's/^Icon=.*/Icon=clippy/' "$pkgdir/usr/share/applications/clippy.desktop"
+    install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

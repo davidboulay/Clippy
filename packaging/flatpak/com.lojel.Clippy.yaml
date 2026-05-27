@@ -1,0 +1,64 @@
+app-id: com.lojel.Clippy
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: clippy
+
+finish-args:
+  # Direct Wayland access is required for wlr-layer-shell and for wl-clipboard's
+  # data-control protocol (the panel and clipboard watching both need it).
+  - --socket=wayland
+  - --share=ipc
+  # System-tray icon (StatusNotifierItem) host — only works if the ayatana
+  # appindicator module below is enabled (see notes).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Write the COSMIC global-shortcut binding and the XDG autostart entry on the
+  # host. These intentionally widen the sandbox; remove them if you don't want
+  # Clippy to register a shortcut/autostart itself.
+  - --filesystem=xdg-config/cosmic:create
+  - --filesystem=xdg-config/autostart:create
+  # Allow `flatpak run com.lojel.Clippy …` to be invoked for the shortcut.
+  - --talk-name=org.freedesktop.Flatpak
+
+modules:
+  # --- wlr-layer-shell bindings for GTK3 (not in the GNOME runtime) ---------
+  - name: gtk-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Dexamples=false
+      - -Ddocs=false
+      - -Dtests=false
+    sources:
+      - type: git
+        url: https://github.com/wmww/gtk-layer-shell.git
+        tag: v0.8.2
+
+  # --- wl-clipboard (provides wl-copy / wl-paste) ---------------------------
+  - name: wl-clipboard
+    buildsystem: meson
+    sources:
+      - type: git
+        url: https://github.com/bugaevc/wl-clipboard.git
+        tag: v2.2.1
+
+  # --- OPTIONAL: tray icon support. Uncomment this chain to bundle Ayatana
+  #     AppIndicator (libdbusmenu + libayatana-indicator + libayatana-
+  #     appindicator). Without it the panel still works; only the tray icon is
+  #     absent (Clippy degrades gracefully). Left out by default to keep the
+  #     build small.
+
+  # --- the app -------------------------------------------------------------
+  - name: clippy
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/lib/clippy
+      - cp -r clippy /app/lib/clippy/
+      - find /app/lib/clippy -name '__pycache__' -type d -prune -exec rm -rf {} + || true
+      - install -Dm755 packaging/flatpak/clippy-launcher.sh /app/bin/clippy
+      - install -Dm644 clippy/icons/clippy.png /app/share/icons/hicolor/512x512/apps/com.lojel.Clippy.png
+      - install -Dm644 clippy/icons/clippy.png /app/share/icons/hicolor/512x512/apps/clippy.png
+      - install -Dm644 packaging/flatpak/com.lojel.Clippy.desktop /app/share/applications/com.lojel.Clippy.desktop
+      - install -Dm644 packaging/flatpak/com.lojel.Clippy.metainfo.xml /app/share/metainfo/com.lojel.Clippy.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..
