@@ -21,18 +21,46 @@ _SEND_COMMANDS = {
     "quit": "quit",
     "settings": "open-settings",
 }
+# Commands that should transparently start the daemon if it isn't running, so a
+# fresh install "just works" when launched from the app menu / a shortcut.
+_AUTOSTART_COMMANDS = {"toggle", "show", "settings"}
+
+
+def _ensure_daemon() -> bool:
+    """Start the background daemon detached and wait for it to come up."""
+    import subprocess
+    import time
+
+    from . import ipc
+
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "clippy", "daemon"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,  # survive this short-lived process
+        )
+    except OSError:
+        return False
+    for _ in range(60):  # up to ~6s for the IPC socket to appear
+        if ipc.daemon_running():
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def _cmd_send(command: str) -> int:
     from . import ipc
 
     if not ipc.daemon_running():
-        print(
-            "clippy: daemon is not running. Start it with `clippy daemon` "
-            "(or enable autostart).",
-            file=sys.stderr,
-        )
-        return 1
+        if command in _AUTOSTART_COMMANDS:
+            if not _ensure_daemon():
+                print("clippy: could not start the daemon.", file=sys.stderr)
+                return 1
+        else:
+            print("clippy: daemon is not running.", file=sys.stderr)
+            return 1
     ipc.send(_SEND_COMMANDS[command])
     return 0
 
