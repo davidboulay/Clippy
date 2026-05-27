@@ -1,79 +1,44 @@
-# Publishing Clippy to Flathub (and thus the COSMIC Store)
+# Flatpak / Flathub — and why it does NOT work on COSMIC
 
-The **COSMIC Store** has no separate submission process — it's a storefront over
-**Flathub** (plus your configured apt repos). So getting Clippy into the COSMIC
-Store = getting it onto Flathub. Once it's on Flathub, it appears in the Store
-automatically.
+> **Verdict: Clippy cannot be shipped as a Flatpak for COSMIC users.**
+> Distribute the native **`.deb`** (and AUR) instead. The COSMIC Store, which
+> lists Flathub apps, is therefore not a viable channel for this app.
 
-App ID: **`io.github.davidboulay.Clippy`** (derived from the GitHub repo, so it's
-verifiable on Flathub via your GitHub login — no domain ownership needed).
+## Why (confirmed empirically)
 
-Manifest: [`packaging/flatpak/io.github.davidboulay.Clippy.yaml`](packaging/flatpak/io.github.davidboulay.Clippy.yaml)
-— builds from the pinned `v0.2.1` tag and bundles `gtk-layer-shell` +
-`wl-clipboard` (not in the GNOME runtime).
+Clippy's two core mechanisms use **privileged Wayland protocols**:
+- the panel uses **`zwlr_layer_shell_v1`** (layer-shell),
+- clipboard history uses **`wlr/ext-data-control`** (via `wl-paste --watch`).
 
-## 1. Build & test locally first (the real prerequisite)
+`cosmic-comp` (smithay) implements **`wp_security_context_v1`**, and Flatpak
+(1.15+) attaches a security context to every sandboxed app. Smithay then
+**withholds privileged protocols from security-context clients**. Result, when
+run as a Flatpak on COSMIC:
 
-```bash
-make flatpak
-flatpak run io.github.davidboulay.Clippy daemon &
-flatpak run io.github.davidboulay.Clippy settings
+```
+your Wayland compositor does not support the Layer Shell protocol → Falling back to XDG shell
+Watch mode requires a compositor that supports the wlroots data-control protocol
 ```
 
-Verify (flatpak-specific risk areas):
-- Panel renders as a bottom strip; type-to-search + arrow nav work on open.
-- The IPC socket in `$XDG_RUNTIME_DIR` works across `flatpak run` calls, so
-  `toggle` reaches the daemon.
-- Setting the shortcut writes `~/.config/cosmic/...` (needs the
-  `--filesystem=xdg-config/cosmic` permission in the manifest).
-- Tray icon is **absent** unless you enable the AppIndicator module (panel +
-  shortcut + settings still work without it).
-- Sound is likely silent (no `pw-play` in the runtime).
+The native package (no security context) sees both protocols and works; the
+sandboxed Flatpak does not. **No Flatpak permission can re-enable them** — that
+is the explicit purpose of the security context. This affects clipboard
+managers and layer-shell bars generally, which is why working examples are
+essentially absent from Flathub on Wayland.
 
-## 2. Lint & validate (Flathub gates on these)
+## So how do COSMIC users get Clippy?
 
-```bash
-# AppStream metainfo
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-    appstream packaging/flatpak/io.github.davidboulay.Clippy.metainfo.xml
+- **`.deb`** from GitHub Releases (built by CI): `sudo apt install ./clippy_*.deb`
+- **AUR** (`packaging/arch/PKGBUILD`) for Arch-based distros
+- A personal apt repo if you want `apt`-style updates
 
-# Manifest
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-    manifest packaging/flatpak/io.github.davidboulay.Clippy.yaml
+## The manifest (kept for non-security-context compositors)
 
-# Built result (after `make flatpak` produced build-dir)
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-    builddir packaging/flatpak/build-dir
-```
-
-Fix anything they report before submitting.
-
-## 3. Submit to Flathub
-
-1. Sign in to https://flathub.org with your **GitHub** account.
-2. Fork https://github.com/flathub/flathub.
-3. Create a branch (any name, e.g. `io.github.davidboulay.Clippy`).
-4. Add **only** the manifest at the repo root, named exactly
-   `io.github.davidboulay.Clippy.yaml`. (The `.desktop`, metainfo, launcher and
-   icon are pulled from Clippy's own git tag, so they don't need to be copied
-   into the Flathub repo.)
-5. Open a Pull Request against `master`. The build bot will test it; a reviewer
-   will review. On merge, a dedicated `flathub/io.github.davidboulay.Clippy`
-   repo is created and you become its maintainer.
-
-## Likely review discussion points
-
-- **`--filesystem=xdg-config/cosmic`** (so Clippy can write the COSMIC
-  shortcut) is broad; reviewers may ask to drop it. If removed, set the key
-  manually in COSMIC settings (command: `flatpak run
-  io.github.davidboulay.Clippy toggle`). Consider gating the in-app shortcut
-  picker on this permission so it doesn't silently no-op when sandboxed.
-- **Autostart**: writing `~/.config/autostart` directly is allowed by the
-  current manifest; the "portal-correct" alternative is the Background portal.
-- **Tray**: optional; enable the Ayatana module if you want it bundled.
-
-## Updating later
-
-Bump `__version__` in `clippy/__init__.py`, tag a release (`vX.Y.Z`), then update
-the manifest's `clippy` module `tag:`/`commit:` and the metainfo `<release>`,
-and open a PR to the `flathub/io.github.davidboulay.Clippy` repo.
+`packaging/flatpak/io.github.davidboulay.Clippy.yaml` builds correctly (it
+bundles `gtk-layer-shell` + `wl-clipboard`). On compositors that do **not**
+gate privileged protocols behind a security context (some sway/labwc setups),
+the Flatpak may work. To actually submit to Flathub you would still need to:
+pin the app source to a release tag+commit (currently `branch: main`), bump the
+runtime to a supported GNOME version (47 is EOL), and pass `flatpak-builder-lint`.
+But for COSMIC — the target audience — it will not function, so we are not
+pursuing it.

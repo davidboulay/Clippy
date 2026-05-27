@@ -8,8 +8,8 @@ and the `wl-clipboard` CLI. That shapes how each format works.
 |--------|-----|-------|-------|
 | **.deb** | ✅ best on Ubuntu/Pop!_OS/Debian | `make deb` | Built & verified. Deps resolved by apt. |
 | **Arch** | ✅ good on Arch/Manjaro | `make arch` | `PKGBUILD` builds from the local tree. |
-| **Flatpak** | ⚠️ works, with caveats | `make flatpak` | Bundles layer-shell + wl-clipboard; tray optional; needs broad fs perms to write the COSMIC shortcut. |
-| **AppImage** | ⚠️ experimental | `make appimage` | GI/GTK bundling is fragile; prefer .deb/Flatpak. |
+| **Flatpak** | ❌ broken on COSMIC | `make flatpak` | The sandbox's Wayland security-context makes COSMIC withhold layer-shell + data-control, so the panel and clipboard watching don't work. See [`FLATHUB.md`](../FLATHUB.md). |
+| **AppImage** | ⚠️ experimental | `make appimage` | GI/GTK bundling is fragile; prefer .deb. |
 | **source** | ✅ any wlroots/COSMIC distro | `./scripts/install.sh` | Installs deps + a `~/.local/bin` launcher. |
 
 All build outputs land in `dist/`.

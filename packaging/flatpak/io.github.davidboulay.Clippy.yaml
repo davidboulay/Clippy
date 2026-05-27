@@ -39,7 +39,15 @@ modules:
         commit: 91e5ef02b557f93337bcc11ffe8c0a251aa9ab52
 
   - name: wl-clipboard
-    buildsystem: meson
+    # buildsystem: simple — wl-clipboard's `meson install` hardcodes an absolute
+    # /usr/share/fish path for shell completions (read-only in the sandbox), so
+    # we build and copy only the two binaries we need.
+    buildsystem: simple
+    build-commands:
+      - meson setup _build --prefix=/app --buildtype=release
+      - ninja -C _build
+      - install -Dm755 _build/src/wl-copy /app/bin/wl-copy
+      - install -Dm755 _build/src/wl-paste /app/bin/wl-paste
     sources:
       - type: git
         url: https://github.com/bugaevc/wl-clipboard.git
@@ -64,5 +72,5 @@ modules:
     sources:
       - type: git
         url: https://github.com/davidboulay/clippy.git
-        tag: v0.2.1
-        commit: 0aa153415ac36c2eb11594a5887b954e1f15d793
+        branch: main
+        commit: d02d44b4f0f1941b216059c36c36cfd34bc73af4

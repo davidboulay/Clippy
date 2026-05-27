@@ -14,9 +14,13 @@ flatpak --user remote-add --if-not-exists flathub \
 # flatpak-builder may be a system package or the org.flatpak.Builder flatpak.
 if command -v flatpak-builder >/dev/null 2>&1; then
     BUILDER="flatpak-builder"
+elif flatpak info org.flatpak.Builder >/dev/null 2>&1; then
+    # Already installed — don't re-run `flatpak install` (it stalls probing the
+    # remote for updates even when nothing is missing).
+    BUILDER="flatpak run org.flatpak.Builder"
 else
-    echo "==> flatpak-builder not found; installing org.flatpak.Builder (user)"
-    flatpak --user install -y flathub org.flatpak.Builder
+    echo "==> Installing org.flatpak.Builder (user)…"
+    flatpak --user install -y --noninteractive flathub org.flatpak.Builder
     BUILDER="flatpak run org.flatpak.Builder"
 fi
 
