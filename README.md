@@ -9,6 +9,8 @@ Lives in the **system tray** (a paperclip), never in the dock. Built for
 **Wayland** (developed on **Pop!_OS 24.04 + COSMIC**; also works on Sway,
 Hyprland, and other wlroots compositors).
 
+![Clippy's clipboard panel at the bottom of the screen](docs/screenshot.png)
+
 ## Features
 
 - **Bottom panel of tiles** for recent clipboard text and images.
