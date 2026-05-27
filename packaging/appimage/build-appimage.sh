@@ -60,7 +60,7 @@ exec "$HERE/bin/python3" -m clippy "$@"
 EOF
 chmod +x "$APPDIR/usr/bin/clippy"
 
-cp "$REPO/packaging/flatpak/com.lojel.Clippy.desktop" \
+cp "$REPO/packaging/flatpak/io.github.davidboulay.Clippy.desktop" \
    "$APPDIR/usr/share/applications/clippy.desktop"
 sed -i 's/^Icon=.*/Icon=clippy/' "$APPDIR/usr/share/applications/clippy.desktop"
 cp "$APPDIR/usr/share/applications/clippy.desktop" "$APPDIR/clippy.desktop"

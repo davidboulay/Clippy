@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.davidboulay.Clippy</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Clippy</name>
+  <summary>Clipboard history panel for Wayland</summary>
+  <developer id="io.github.davidboulay">
+    <name>David Boulay</name>
+  </developer>
+  <description>
+    <p>
+      Clippy shows a Paste-style strip of recent clipboard items (text and
+      images) at the bottom of the screen, toggled by a global shortcut.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Text and image clipboard history with pinning and search</li>
+      <li>Follows the COSMIC light/dark theme</li>
+      <li>System-tray icon; never shown in the dock</li>
+      <li>History retention, copy sound, and paste-as-plain-text options</li>
+      <li>Right-click a tile for per-item actions (incl. copy as plain text)</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.davidboulay.Clippy.desktop</launchable>
+  <url type="homepage">https://github.com/davidboulay/clippy</url>
+  <url type="bugtracker">https://github.com/davidboulay/clippy/issues</url>
+  <url type="vcs-browser">https://github.com/davidboulay/clippy</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/davidboulay/clippy/main/docs/screenshot.png</image>
+      <caption>Clippy's clipboard panel at the bottom of the screen</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>clipboard</keyword>
+    <keyword>history</keyword>
+    <keyword>paste</keyword>
+    <keyword>copy</keyword>
+  </keywords>
+  <provides>
+    <binary>clippy</binary>
+  </provides>
+  <releases>
+    <release version="0.2.1" date="2026-05-27"/>
+    <release version="0.2.0" date="2026-05-27"/>
+  </releases>
+</component>

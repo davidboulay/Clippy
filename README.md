@@ -82,6 +82,10 @@ make appimage   # experimental
 | Flatpak | other distros | works, with sandbox caveats |
 | AppImage | portable single file | experimental |
 
+**COSMIC Store / Flathub:** the COSMIC Store is a storefront over Flathub, so
+publishing the Flatpak to Flathub lists Clippy in the Store. App ID
+`io.github.davidboulay.Clippy`; submission steps are in [`FLATHUB.md`](FLATHUB.md).
+
 ### From source
 
 ```bash

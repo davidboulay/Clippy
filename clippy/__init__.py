@@ -5,5 +5,5 @@ screen (text + images). Lives in the system tray, never in the dock.
 """
 
 __version__ = "0.2.1"
-APP_ID = "com.lojel.Clippy"
+APP_ID = "io.github.davidboulay.Clippy"
 APP_NAME = "Clippy"

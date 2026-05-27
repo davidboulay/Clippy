@@ -37,8 +37,8 @@ shortcut. The daemon autostarts after first launch (toggle in Settings).
 
 ```bash
 make flatpak        # builds & installs to the user scope
-flatpak run com.lojel.Clippy daemon &
-flatpak run com.lojel.Clippy settings
+flatpak run io.github.davidboulay.Clippy daemon &
+flatpak run io.github.davidboulay.Clippy settings
 ```
 
 Requires `flatpak` + Flathub access (the script installs `org.flatpak.Builder`
@@ -46,11 +46,11 @@ if `flatpak-builder` is missing, and pulls `org.gnome.Platform//47`).
 
 Caveats specific to a sandboxed clipboard manager:
 - **Tray icon** is disabled unless you uncomment the Ayatana AppIndicator module
-  in `com.lojel.Clippy.yaml` (panel + shortcut still work without it).
+  in `io.github.davidboulay.Clippy.yaml` (panel + shortcut still work without it).
 - **COSMIC shortcut / autostart**: the manifest grants
   `--filesystem=xdg-config/cosmic` and `xdg-config/autostart` so Clippy can
   register them; remove those finish-args for a tighter sandbox and set the key
-  manually (command: `flatpak run com.lojel.Clippy toggle`).
+  manually (command: `flatpak run io.github.davidboulay.Clippy toggle`).
 - **Sound** may be unavailable (no `pw-play`/`paplay` in the GNOME runtime).
 
 ## AppImage (experimental)
@@ -79,4 +79,4 @@ wl-clipboard`.
 
 Edit `__version__` in `clippy/__init__.py`; the deb/appimage scripts read it,
 and update `pkgver` in `packaging/arch/PKGBUILD` and the `<release>` in
-`packaging/flatpak/com.lojel.Clippy.metainfo.xml`.
+`packaging/flatpak/io.github.davidboulay.Clippy.metainfo.xml`.

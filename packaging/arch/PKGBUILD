@@ -38,7 +38,7 @@ GdkPixbuf.Pixbuf.new_from_file_at_scale(sys.argv[1], s, s, True).savev(sys.argv[
 PY
     done
 
-    install -Dm644 "$_repo/packaging/flatpak/com.lojel.Clippy.desktop" \
+    install -Dm644 "$_repo/packaging/flatpak/io.github.davidboulay.Clippy.desktop" \
         "$pkgdir/usr/share/applications/clippy.desktop"
     sed -i 's/^Icon=.*/Icon=clippy/' "$pkgdir/usr/share/applications/clippy.desktop"
     install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

@@ -1,0 +1,68 @@
+app-id: io.github.davidboulay.Clippy
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: clippy
+
+finish-args:
+  # wlr-layer-shell (the panel) and wl-clipboard's data-control both need a
+  # direct Wayland connection.
+  - --socket=wayland
+  - --share=ipc
+  # System-tray icon host (only used if the Ayatana AppIndicator module is
+  # enabled; the app degrades gracefully without it).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Lets Clippy register its global shortcut + autostart on the host. Reviewers
+  # may ask to drop the cosmic one; if removed, the shortcut is set manually in
+  # COSMIC settings (command: flatpak run io.github.davidboulay.Clippy toggle).
+  - --filesystem=xdg-config/cosmic:create
+  - --filesystem=xdg-config/autostart:create
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - '*.la'
+  - '*.a'
+
+modules:
+  - name: gtk-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Dexamples=false
+      - -Ddocs=false
+      - -Dtests=false
+    sources:
+      - type: git
+        url: https://github.com/wmww/gtk-layer-shell.git
+        tag: v0.8.2
+        commit: 91e5ef02b557f93337bcc11ffe8c0a251aa9ab52
+
+  - name: wl-clipboard
+    buildsystem: meson
+    sources:
+      - type: git
+        url: https://github.com/bugaevc/wl-clipboard.git
+        tag: v2.2.1
+        commit: 3eb912c274042cd5deed6b478b39908a12f37498
+
+  # OPTIONAL tray support: uncomment a libdbusmenu + libayatana-indicator +
+  # libayatana-appindicator module chain to bundle the tray icon. Without it the
+  # panel, shortcut and settings all work; only the tray icon is absent.
+
+  - name: clippy
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/lib/clippy
+      - cp -r clippy /app/lib/clippy/
+      - find /app/lib/clippy -name '__pycache__' -type d -prune -exec rm -rf {} + || true
+      - install -Dm755 packaging/flatpak/clippy-launcher.sh /app/bin/clippy
+      - install -Dm644 clippy/icons/clippy.png /app/share/icons/hicolor/512x512/apps/io.github.davidboulay.Clippy.png
+      - install -Dm644 clippy/icons/clippy.png /app/share/icons/hicolor/512x512/apps/clippy.png
+      - install -Dm644 packaging/flatpak/io.github.davidboulay.Clippy.desktop /app/share/applications/io.github.davidboulay.Clippy.desktop
+      - install -Dm644 packaging/flatpak/io.github.davidboulay.Clippy.metainfo.xml /app/share/metainfo/io.github.davidboulay.Clippy.metainfo.xml
+    sources:
+      - type: git
+        url: https://github.com/davidboulay/clippy.git
+        tag: v0.2.1
+        commit: 0aa153415ac36c2eb11594a5887b954e1f15d793
