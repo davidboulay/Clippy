@@ -188,26 +188,20 @@ class Panel:
         self._tiles: List[Tile] = []
         self._selected = -1
         self._visible = False
-        self._context_menu = None
+        self._shown_at = 0.0
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.window.add(outer)
-
-        # Click-away backdrop fills the screen above the strip.
-        backdrop = Gtk.EventBox()
-        backdrop.get_style_context().add_class("backdrop")
-        backdrop.connect("button-press-event", lambda *_: (self.hide(), True)[1])
-        outer.pack_start(backdrop, True, True, 0)
-
+        # Non-modal bottom strip: the window *is* the panel (no full-screen
+        # backdrop), so the COSMIC panel and other apps stay clickable. Click-
+        # away dismissal is handled by hiding on focus-out (see _on_focus_out).
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         body.get_style_context().add_class("panel-body")
-        outer.pack_start(body, False, False, 0)
+        self.window.add(body)
 
         body.pack_start(self._build_header(), False, False, 0)
 
         # Inline action bar (our "context menu"): rendered inside the surface
-        # so the compositor can't dismiss it the way it does popups on an
-        # EXCLUSIVE-keyboard layer surface. Hidden until a tile is right-clicked.
+        # rather than as a popup, which compositors can dismiss on layer-shell
+        # surfaces. Hidden until a tile is right-clicked.
         self.action_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.action_bar.get_style_context().add_class("action-bar")
         body.pack_start(self.action_bar, False, False, 0)
@@ -235,6 +229,7 @@ class Panel:
         body.pack_start(hint, False, False, 0)
 
         self.window.connect("key-press-event", self._on_key)
+        self.window.connect("focus-out-event", self._on_focus_out)
         self.window.connect("delete-event", lambda *_: (self.hide(), True)[1])
 
     def _build_header(self) -> Gtk.Widget:
@@ -270,11 +265,10 @@ class Panel:
         win = self.window
         GtkLayerShell.init_for_window(win)
         GtkLayerShell.set_namespace(win, "clippy")
+        # OVERLAY, anchored to the bottom edge + sides: a bottom strip sized to
+        # its content that draws *over* the dock. It only covers the bottom
+        # region, so the COSMIC top panel and other apps stay fully clickable.
         GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
-        # Anchor to the bottom + sides (not the top): we force full height in
-        # _fill_active_monitor for the dimmed overlay, but if the compositor
-        # clamps to content height, anchoring to the bottom still yields a
-        # correct bottom strip instead of a top-pinned window.
         for edge in (
             GtkLayerShell.Edge.BOTTOM,
             GtkLayerShell.Edge.LEFT,
@@ -282,14 +276,16 @@ class Panel:
         ):
             GtkLayerShell.set_anchor(win, edge, True)
         GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.TOP, False)
-        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.EXCLUSIVE)
-        GtkLayerShell.set_exclusive_zone(win, 0)
+        # ON_DEMAND, not EXCLUSIVE: we don't hold a session-wide keyboard grab,
+        # so e.g. the COSMIC panel's own right-click menu can still take focus.
+        # The panel yields focus when you click away — see _on_focus_out.
+        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.ON_DEMAND)
+        # -1: ignore the dock's exclusive zone and anchor to the true screen
+        # edge, so the strip overlaps (covers) the dock rather than sitting above it.
+        GtkLayerShell.set_exclusive_zone(win, -1)
 
-    def _fill_active_monitor(self) -> None:
-        """Pin the overlay to the active monitor and force it to that monitor's
-        full size. COSMIC doesn't reliably stretch a 4-edge-anchored surface to
-        fill, so we size it explicitly; this makes the backdrop expand and the
-        strip settle at the bottom."""
+    def _set_active_monitor(self) -> None:
+        """Show the strip on the monitor under the pointer (best effort)."""
         try:
             display = Gdk.Display.get_default()
             monitor = None
@@ -304,8 +300,6 @@ class Panel:
                 )
             if monitor is not None:
                 GtkLayerShell.set_monitor(self.window, monitor)
-                geo = monitor.get_geometry()
-                self.window.set_size_request(geo.width, geo.height)
         except Exception:
             pass
 
@@ -439,6 +433,14 @@ class Panel:
     def _hide_actions(self) -> None:
         self.action_bar.hide()
 
+    def _on_focus_out(self, _widget, _event) -> bool:
+        # Click-away dismissal: when the strip loses keyboard focus (you clicked
+        # the COSMIC panel, another window, or the desktop), retract. Ignore the
+        # brief focus settle right after showing.
+        if self._visible and (time.monotonic() - self._shown_at) > 0.25:
+            self.hide()
+        return False
+
     def delete_entry(self, entry_id: int) -> None:
         storage.delete(entry_id)
         prev = self._selected
@@ -505,11 +507,12 @@ class Panel:
     # -- show / hide ------------------------------------------------------
     def show(self) -> None:
         self._controller.refresh_theme()
-        self._fill_active_monitor()
+        self._set_active_monitor()
         self.reload()
         self.window.show_all()
         self.action_bar.hide()  # show_all reveals it; keep hidden until invoked
         self._visible = True
+        self._shown_at = time.monotonic()
         self.search.grab_focus()
 
     def hide(self) -> None:
