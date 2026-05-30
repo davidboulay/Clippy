@@ -1,7 +1,7 @@
 # Maintainer: David Boulay <david.boulay@lojel.com>
 # Builds Clippy from the local repository tree (run `makepkg` from this dir).
 pkgname=clippy
-pkgver=0.2.4
+pkgver=0.2.5
 pkgrel=1
 pkgdesc="Clipboard history panel for Wayland (COSMIC/wlroots)"
 arch=('any')

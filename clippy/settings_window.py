@@ -7,6 +7,7 @@ with a "check for updates" button (GitHub Releases).
 """
 from __future__ import annotations
 
+import os
 import threading
 
 import gi
@@ -201,13 +202,25 @@ class SettingsWindow:
         about_row.pack_end(self._check_btn, False, False, 0)
         body.pack_start(about_row, False, False, 0)
 
-        # Becomes an "Open download page" button when an update is found.
+        # Action row shown only when an update is available.
+        self._update_url = updates.RELEASES_PAGE
+        self._deb_url = None
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        actions.set_halign(Gtk.Align.END)
+        actions.set_no_show_all(True)
+        self._update_actions = actions
+
+        self._update_btn = Gtk.Button(label="Update now")
+        self._update_btn.get_style_context().add_class("normal-btn")
+        self._update_btn.connect("clicked", self._on_update_now)
+        self._update_btn.set_no_show_all(True)
+        actions.pack_start(self._update_btn, False, False, 0)
+
         self._download_btn = Gtk.Button(label="Open download page")
         self._download_btn.get_style_context().add_class("normal-btn")
         self._download_btn.connect("clicked", self._on_open_download)
-        self._download_url = updates.RELEASES_PAGE
-        self._download_btn.set_no_show_all(True)
-        body.pack_start(self._download_btn, False, False, 0)
+        actions.pack_start(self._download_btn, False, False, 0)
+        body.pack_start(actions, False, False, 0)
 
         close_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         close_btn = Gtk.Button(label="Close")
@@ -245,7 +258,7 @@ class SettingsWindow:
     def _on_check_updates(self, _btn):
         self._check_btn.set_sensitive(False)
         self._update_status.set_text("Checking…")
-        self._download_btn.hide()
+        self._update_actions.hide()
 
         def worker():
             result = updates.check()
@@ -257,21 +270,65 @@ class SettingsWindow:
         self._check_btn.set_sensitive(True)
         if result.error:
             self._update_status.set_text(f"Couldn't check: {result.error}")
-            self._download_btn.hide()
+            self._update_actions.hide()
         elif result.update_available:
             self._update_status.set_text(
                 f"Update available: {result.latest} (you have "
                 f"{updates.current_version()})"
             )
-            self._download_url = result.url
-            self._download_btn.show()
+            self._update_url = result.url
+            self._deb_url = result.deb_url
+            # One-click install when the release ships a .deb; else just link.
+            self._update_btn.set_visible(bool(result.deb_url))
+            self._update_actions.show()
         else:
             self._update_status.set_text("You're up to date.")
-            self._download_btn.hide()
+            self._update_actions.hide()
         return False
 
     def _on_open_download(self, _btn):
-        Gtk.show_uri_on_window(self.window, self._download_url, Gdk.CURRENT_TIME)
+        Gtk.show_uri_on_window(self.window, self._update_url, Gdk.CURRENT_TIME)
+
+    def _on_update_now(self, _btn):
+        if not self._deb_url:
+            return
+        self._update_btn.set_sensitive(False)
+        self._check_btn.set_sensitive(False)
+        self._update_status.set_text("Downloading update…")
+
+        def worker():
+            try:
+                path = updates.download_deb(self._deb_url)
+            except Exception as exc:  # network/disk failure
+                GLib.idle_add(self._install_failed, f"Download failed: {exc}")
+                return
+            GLib.idle_add(
+                lambda: self._update_status.set_text(
+                    "Installing… enter your password in the dialog."
+                )
+            )
+            ok, msg = updates.install_deb(path)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            GLib.idle_add(self._install_done, ok, msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _install_failed(self, message):
+        self._update_status.set_text(message)
+        self._update_btn.set_sensitive(True)
+        self._check_btn.set_sensitive(True)
+        return False
+
+    def _install_done(self, ok, msg):
+        if ok:
+            self._update_status.set_text("Updated — restarting Clippy…")
+            self._controller.restart_for_update()
+        else:
+            self._install_failed(f"Update failed: {msg}")
+        return False
 
     def _on_sound(self, active):
         settings.set_value("sound_on_copy", active)

@@ -108,6 +108,25 @@ class AppController:
     def quit(self) -> None:
         self._gtk.main_quit()
 
+    def restart_for_update(self) -> None:
+        """After a new package is installed, relaunch the daemon so the new
+        code takes over, then quit this (old) process. A short sleep lets us
+        release the IPC socket before the replacement binds it."""
+        from gi.repository import GLib
+
+        exe = shutil.which("clippy") or "/usr/bin/clippy"
+        try:
+            subprocess.Popen(
+                ["sh", "-c", f"sleep 1.5; exec '{exe}' daemon"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            pass
+        GLib.timeout_add(400, lambda: (self.quit(), False)[1])
+
     # -- helpers ----------------------------------------------------------
     def _sync_autostart(self) -> None:
         want = bool(settings.get("open_at_login"))

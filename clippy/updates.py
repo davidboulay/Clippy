@@ -6,8 +6,10 @@ be imported anywhere. Network failures are reported, never raised.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ class UpdateResult:
     url: str                       # release page to open
     update_available: bool
     error: Optional[str] = None    # human-readable reason the check failed
+    deb_url: Optional[str] = None  # direct .deb download, if the release has one
 
 
 def _parse(version: str) -> Tuple[int, ...]:
@@ -71,7 +74,46 @@ def check(timeout: float = 8.0) -> UpdateResult:
     latest = tag.lstrip("vV")
     url = data.get("html_url") or RELEASES_PAGE
     available = _parse(latest) > _parse(__version__)
-    return UpdateResult(latest, url, available)
+    deb_url = next(
+        (a.get("browser_download_url") for a in (data.get("assets") or [])
+         if str(a.get("name", "")).endswith(".deb")),
+        None,
+    )
+    return UpdateResult(latest, url, available, deb_url=deb_url)
+
+
+def download_deb(deb_url: str, timeout: float = 180.0) -> str:
+    """Download a release .deb to a temp file and return its path."""
+    fd, path = tempfile.mkstemp(prefix="clippy-update-", suffix=".deb")
+    os.close(fd)
+    req = urllib.request.Request(deb_url, headers={"User-Agent": f"Clippy/{__version__}"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp, open(path, "wb") as fh:
+        shutil.copyfileobj(resp, fh)
+    return path
+
+
+def install_deb(path: str, timeout: float = 300.0) -> Tuple[bool, str]:
+    """Install a .deb as root via PolicyKit (pkexec shows a password dialog).
+
+    Returns (success, message). Never raises.
+    """
+    if shutil.which("pkexec") is None:
+        return False, "pkexec (PolicyKit) is not available"
+    if not os.path.isfile(path):
+        return False, "downloaded file is missing"
+    try:
+        proc = subprocess.run(
+            ["pkexec", "apt-get", "install", "-y", "--allow-downgrades", path],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    if proc.returncode == 0:
+        return True, "installed"
+    if proc.returncode in (126, 127):
+        return False, "Authentication cancelled"
+    detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+    return False, (detail[-1] if detail else f"apt-get exited {proc.returncode}")
 
 
 def notify(latest: str, url: str) -> None:
