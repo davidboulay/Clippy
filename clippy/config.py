@@ -38,6 +38,12 @@ BUNDLED_ICON = PACKAGE_ROOT / "icons" / "clippy.png"
 # Hard safety cap regardless of the time-based retention setting.
 MAX_HISTORY = 1000
 
+# How many tiles to build into the panel at once. The strip is a horizontal
+# row nobody scrolls hundreds of items through, and each tile (especially an
+# image one) costs real time to construct, so we cap the rendered set to keep
+# opening instant as history grows. Search still queries the whole history.
+DISPLAY_LIMIT = 60
+
 # Largest image (bytes) we will store. Bigger payloads are skipped.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MiB
 

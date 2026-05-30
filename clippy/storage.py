@@ -155,6 +155,12 @@ def list_entries(query: str = "", limit: int = config.MAX_HISTORY) -> List[Entry
     return [_row_to_entry(r) for r in rows]
 
 
+def count() -> int:
+    """Total number of stored entries (cheap; no row materialization)."""
+    with _connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+
+
 def get(entry_id: int) -> Optional[Entry]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
