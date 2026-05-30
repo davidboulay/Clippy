@@ -18,6 +18,8 @@ from . import clipboard, config, ipc, settings, setup, sound, theme
 from .capture import capture_current
 
 _RETENTION_INTERVAL_SECONDS = 1800  # re-check every 30 min
+_UPDATE_TICK_SECONDS = 6 * 3600     # wake every 6h; act only if 24h elapsed
+_UPDATE_MIN_INTERVAL = 24 * 3600    # at most one network check per day
 
 
 def _install_icon() -> None:
@@ -166,6 +168,13 @@ def run_daemon() -> int:
         _RETENTION_INTERVAL_SECONDS, lambda: (storage_apply_retention_safe(), True)[1]
     )
 
+    # Automatic update check: once shortly after startup, then on a slow tick.
+    # Each tick only hits the network if enabled and >24h since the last check.
+    GLib.timeout_add_seconds(45, lambda: (auto_update_check(), False)[1])
+    GLib.timeout_add_seconds(
+        _UPDATE_TICK_SECONDS, lambda: (auto_update_check(), True)[1]
+    )
+
     print("clippy: daemon started.")
     try:
         Gtk.main()
@@ -188,3 +197,29 @@ def storage_apply_retention_safe() -> None:
         storage.apply_retention()
     except Exception:
         pass
+
+
+def auto_update_check() -> None:
+    """If enabled and >24h since the last check, query GitHub on a background
+    thread and notify if a newer release exists. Never blocks the main loop."""
+    import time
+
+    from . import settings
+
+    if not settings.get("auto_check_updates"):
+        return
+    last = settings.get("last_update_check") or 0
+    if time.time() - last < _UPDATE_MIN_INTERVAL:
+        return
+
+    def worker():
+        from . import updates
+        try:
+            result = updates.check()
+        except Exception:
+            return
+        settings.set_value("last_update_check", time.time())
+        if result.update_available and result.latest:
+            updates.notify(result.latest, result.url)
+
+    threading.Thread(target=worker, daemon=True).start()

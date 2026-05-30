@@ -1,17 +1,20 @@
 """The Clippy settings window (a normal, skip-taskbar GTK window).
 
 Exposes: open-at-login, copy sound, always-paste-as-plain-text, history
-retention with auto-delete, a clear-history action, and a shortcut picker that
-writes the COSMIC binding directly.
+retention with auto-delete, a clear-history action, a shortcut picker that
+writes the COSMIC binding directly, and an About section showing the version
+with a "check for updates" button (GitHub Releases).
 """
 from __future__ import annotations
+
+import threading
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
-from . import config, settings, setup, storage
+from . import config, settings, setup, storage, updates
 
 _MOD_KEYS = {
     Gdk.KEY_Super_L, Gdk.KEY_Super_R, Gdk.KEY_Control_L, Gdk.KEY_Control_R,
@@ -118,6 +121,11 @@ class SettingsWindow:
             self._on_open_at_login,
         )
         self._switch_row(
+            body, "Check for updates automatically",
+            "Periodically check GitHub for a newer version.",
+            bool(prefs["auto_check_updates"]), self._on_auto_updates,
+        )
+        self._switch_row(
             body, "Sound on copy", "Play a short sound whenever you copy.",
             bool(prefs["sound_on_copy"]), self._on_sound,
         )
@@ -173,6 +181,34 @@ class SettingsWindow:
         sc_row.pack_end(self._sc_btn, False, False, 0)
         body.pack_start(sc_row, False, False, 0)
 
+        self._section(body, "About")
+        about_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        about_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        ver_lbl = Gtk.Label(label=f"Clippy {updates.current_version()}")
+        ver_lbl.set_xalign(0.0)
+        ver_lbl.get_style_context().add_class("settings-label")
+        about_text.pack_start(ver_lbl, False, False, 0)
+        self._update_status = Gtk.Label(label="")
+        self._update_status.set_xalign(0.0)
+        self._update_status.set_line_wrap(True)
+        self._update_status.get_style_context().add_class("settings-desc")
+        about_text.pack_start(self._update_status, False, False, 0)
+        about_row.pack_start(about_text, True, True, 0)
+
+        self._check_btn = Gtk.Button(label="Check for updates")
+        self._check_btn.get_style_context().add_class("normal-btn")
+        self._check_btn.connect("clicked", self._on_check_updates)
+        about_row.pack_end(self._check_btn, False, False, 0)
+        body.pack_start(about_row, False, False, 0)
+
+        # Becomes an "Open download page" button when an update is found.
+        self._download_btn = Gtk.Button(label="Open download page")
+        self._download_btn.get_style_context().add_class("normal-btn")
+        self._download_btn.connect("clicked", self._on_open_download)
+        self._download_url = updates.RELEASES_PAGE
+        self._download_btn.set_no_show_all(True)
+        body.pack_start(self._download_btn, False, False, 0)
+
         close_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         close_btn = Gtk.Button(label="Close")
         close_btn.get_style_context().add_class("normal-btn")
@@ -202,6 +238,40 @@ class SettingsWindow:
         if tid:
             settings.set_value("theme_mode", tid)
             self._controller.settings_changed()  # re-applies CSS live
+
+    def _on_auto_updates(self, active):
+        settings.set_value("auto_check_updates", active)
+
+    def _on_check_updates(self, _btn):
+        self._check_btn.set_sensitive(False)
+        self._update_status.set_text("Checking…")
+        self._download_btn.hide()
+
+        def worker():
+            result = updates.check()
+            GLib.idle_add(self._show_update_result, result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update_result(self, result):
+        self._check_btn.set_sensitive(True)
+        if result.error:
+            self._update_status.set_text(f"Couldn't check: {result.error}")
+            self._download_btn.hide()
+        elif result.update_available:
+            self._update_status.set_text(
+                f"Update available: {result.latest} (you have "
+                f"{updates.current_version()})"
+            )
+            self._download_url = result.url
+            self._download_btn.show()
+        else:
+            self._update_status.set_text("You're up to date.")
+            self._download_btn.hide()
+        return False
+
+    def _on_open_download(self, _btn):
+        Gtk.show_uri_on_window(self.window, self._download_url, Gdk.CURRENT_TIME)
 
     def _on_sound(self, active):
         settings.set_value("sound_on_copy", active)

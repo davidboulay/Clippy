@@ -16,6 +16,10 @@ DEFAULTS: Dict[str, Any] = {
     "retention": "1m",
     # "system" follows COSMIC's light/dark; or force "dark" / "light".
     "theme_mode": "system",
+    # Periodically check GitHub for a newer release.
+    "auto_check_updates": True,
+    # State (not a user-facing pref): unix time of the last automatic check.
+    "last_update_check": 0,
     # Stored for display; the actual binding lives in COSMIC's config.
     "shortcut": {"modifiers": ["Super"], "key": "v"},
 }
