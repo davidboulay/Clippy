@@ -307,7 +307,11 @@ class Panel:
     def reload(self) -> None:
         self.action_bar.hide()
         query = self.search.get_text().strip()
-        entries = storage.list_entries(query=query)
+        # Cap the rendered tiles: constructing hundreds of tiles (and decoding
+        # their images) on the UI thread is what makes opening slow as history
+        # grows. The most recent DISPLAY_LIMIT cover the panel; search still
+        # scans the whole history, just bounded to the same number of results.
+        entries = storage.list_entries(query=query, limit=config.DISPLAY_LIMIT)
 
         for child in self.strip.get_children():
             self.strip.remove(child)
@@ -324,9 +328,12 @@ class Panel:
                 self._tiles.append(tile)
                 self.strip.pack_start(tile, False, False, 0)
 
-        total = len(storage.list_entries())
+        total = storage.count()
+        shown = len(entries)
         if query:
-            self.count_label.set_text(f"{len(entries)} of {total}")
+            self.count_label.set_text(f"{shown} of {total}")
+        elif shown < total:
+            self.count_label.set_text(f"showing {shown} of {total}")
         else:
             self.count_label.set_text(f"{total} item{'s' if total != 1 else ''}")
 
