@@ -18,6 +18,12 @@ from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, GtkLayerShell, Pango  # noq
 from . import clipboard, config, settings, storage
 from .storage import Entry
 
+# Opening cost scales with the number of tiles built (each image tile decodes a
+# thumbnail). Only ~8 tiles fit on screen, so we build the first screenful
+# before mapping the window and stream the rest in idle chunks afterwards.
+_FIRST_BATCH = 12   # tiles built synchronously, before the window appears
+_STREAM_CHUNK = 12  # tiles appended per idle tick after the window is up
+
 
 def _relative_time(ts: float) -> str:
     delta = max(0, int(time.time() - ts))
@@ -189,6 +195,15 @@ class Panel:
         self._selected = -1
         self._visible = False
         self._shown_at = 0.0
+        self._tab = "history"  # "history" (unpinned) | "pinned"
+        self._switching_tab = False
+        # Per-tab render cache: switching tabs reuses already-built tiles
+        # instead of reconstructing widgets (and re-decoding images) every
+        # time. Invalidated whenever the underlying data changes.
+        self._tile_cache: dict = {}
+        # Bumped on every reload so an in-flight streamed build can detect it
+        # has been superseded and stop.
+        self._build_seq = 0
 
         # Non-modal bottom strip: the window *is* the panel (no full-screen
         # backdrop), so the COSMIC panel and other apps stay clickable. Click-
@@ -244,10 +259,21 @@ class Panel:
         title.get_style_context().add_class("title")
         header.pack_start(title, False, False, 0)
 
+        self.tab_history = Gtk.ToggleButton(label="History")
+        self.tab_history.get_style_context().add_class("tab")
+        self.tab_history.set_active(True)
+        self.tab_history.connect("toggled", self._on_tab, "history")
+        header.pack_start(self.tab_history, False, False, 0)
+
+        self.tab_pinned = Gtk.ToggleButton(label="★ Pinned")
+        self.tab_pinned.get_style_context().add_class("tab")
+        self.tab_pinned.connect("toggled", self._on_tab, "pinned")
+        header.pack_start(self.tab_pinned, False, False, 0)
+
         self.search = Gtk.SearchEntry()
         self.search.set_placeholder_text("Search clipboard history…")
         self.search.get_style_context().add_class("search")
-        self.search.connect("search-changed", lambda _e: self.reload())
+        self.search.connect("search-changed", self._on_search)
         header.pack_start(self.search, True, True, 0)
 
         self.count_label = Gtk.Label(label="")
@@ -307,39 +333,133 @@ class Panel:
     def reload(self) -> None:
         self.action_bar.hide()
         query = self.search.get_text().strip()
-        # Cap the rendered tiles: constructing hundreds of tiles (and decoding
-        # their images) on the UI thread is what makes opening slow as history
-        # grows. The most recent DISPLAY_LIMIT cover the panel; search still
-        # scans the whole history, just bounded to the same number of results.
-        entries = storage.list_entries(query=query, limit=config.DISPLAY_LIMIT)
+        pinned = self._tab == "pinned"
+        self._build_seq += 1  # supersede any in-flight streamed build
 
+        # Fast path: a fully-built tab is cached — re-pack its tiles instantly
+        # (no widget construction, no image decoding). Switching tabs is a
+        # frequent action, so this keeps it snappy. Bypassed during search; the
+        # cache is dropped whenever the data changes (pin/delete/new copy/open).
+        cached = self._tile_cache.get(self._tab) if not query else None
+        if cached is not None:
+            self._mount(cached["tiles"], cached["total"],
+                        cached["pinned_total"], pinned, query)
+            return
+
+        entries = storage.list_entries(
+            query=query, limit=config.DISPLAY_LIMIT, pinned=pinned
+        )
+        total = storage.count(pinned=pinned)
+        pinned_total = total if pinned else storage.count(pinned=True)
+
+        self._reset_strip()
+        self._update_header(len(entries), total, pinned_total, query)
+        if not entries:
+            self._mount_empty(pinned)
+            return
+
+        if self.empty_label.get_parent() is not None:
+            self.strip.remove(self.empty_label)
+
+        # Build only the first screenful now; stream the rest in idle chunks so
+        # the window maps immediately instead of after decoding every tile.
+        first, rest = entries[:_FIRST_BATCH], entries[_FIRST_BATCH:]
+        self._tiles = [self._make_tile(e) for e in first]
+        self.strip.show_all()
+        self._selected = 0
+        self._refresh_selection()
+
+        if rest:
+            GLib.idle_add(self._stream_tiles, rest, self._build_seq,
+                          total, pinned_total, query)
+        else:
+            self._cache_current(query, total, pinned_total)
+
+    def _stream_tiles(self, entries, seq, total, pinned_total, query) -> bool:
+        if seq != self._build_seq:
+            return False  # a newer reload superseded this build
+        for entry in entries[:_STREAM_CHUNK]:
+            self._tiles.append(self._make_tile(entry))
+        self.strip.show_all()
+        rest = entries[_STREAM_CHUNK:]
+        if rest:
+            GLib.idle_add(self._stream_tiles, rest, seq,
+                          total, pinned_total, query)
+        else:
+            self._cache_current(query, total, pinned_total)
+        return False
+
+    def _mount(self, tiles, total, pinned_total, pinned, query) -> None:
+        """Re-pack an already-built (cached) tile list, instantly."""
+        self._reset_strip()
+        self._update_header(len(tiles), total, pinned_total, query)
+        if not tiles:
+            self._mount_empty(pinned)
+            return
+        if self.empty_label.get_parent() is not None:
+            self.strip.remove(self.empty_label)
+        self._tiles = tiles
+        for tile in tiles:
+            self.strip.pack_start(tile, False, False, 0)
+        self.strip.show_all()
+        self._selected = 0
+        self._refresh_selection()
+
+    def _mount_empty(self, pinned: bool) -> None:
+        self.empty_label.set_text(
+            "No pinned items yet.\n"
+            "Pin a clip (☆) to keep it here, safe from history cleanup."
+            if pinned else
+            "Clipboard history is empty.\n"
+            "Copy something and it will appear here."
+        )
+        if self.empty_label.get_parent() is None:
+            self.strip.pack_start(self.empty_label, True, True, 0)
+        self.strip.show_all()
+        self._selected = -1
+        self._refresh_selection()
+
+    def _make_tile(self, entry: Entry) -> "Tile":
+        tile = Tile(entry, self)
+        self.strip.pack_start(tile, False, False, 0)
+        return tile
+
+    def _reset_strip(self) -> None:
+        # Detach whatever is shown. Cached tiles keep their Python references
+        # (in _tile_cache), so removing them here does not destroy them — they
+        # can be re-packed instantly on the next switch.
         for child in self.strip.get_children():
             self.strip.remove(child)
         self._tiles = []
 
-        if not entries:
-            if self.empty_label.get_parent() is None:
-                self.strip.pack_start(self.empty_label, True, True, 0)
-        else:
-            if self.empty_label.get_parent() is not None:
-                self.strip.remove(self.empty_label)
-            for entry in entries:
-                tile = Tile(entry, self)
-                self._tiles.append(tile)
-                self.strip.pack_start(tile, False, False, 0)
-
-        total = storage.count()
-        shown = len(entries)
+    def _update_header(self, shown: int, total: int, pinned_total: int,
+                       query: str) -> None:
         if query:
             self.count_label.set_text(f"{shown} of {total}")
         elif shown < total:
             self.count_label.set_text(f"showing {shown} of {total}")
         else:
             self.count_label.set_text(f"{total} item{'s' if total != 1 else ''}")
+        self._set_tab_label(
+            self.tab_pinned,
+            f"★ Pinned ({pinned_total})" if pinned_total else "★ Pinned",
+        )
 
-        self.strip.show_all()
-        self._selected = 0 if self._tiles else -1
-        self._refresh_selection()
+    def _cache_current(self, query: str, total: int, pinned_total: int) -> None:
+        if not query:
+            self._tile_cache[self._tab] = {
+                "tiles": list(self._tiles),
+                "total": total,
+                "pinned_total": pinned_total,
+            }
+
+    def _invalidate_cache(self) -> None:
+        """Drop the per-tab render cache so the next reload rebuilds tiles."""
+        self._tile_cache.clear()
+
+    def _set_tab_label(self, btn: Gtk.ToggleButton, label: str) -> None:
+        if btn.get_label() != label:
+            btn.set_label(label)
 
     def _refresh_selection(self) -> None:
         for i, tile in enumerate(self._tiles):
@@ -450,6 +570,7 @@ class Panel:
 
     def delete_entry(self, entry_id: int) -> None:
         storage.delete(entry_id)
+        self._invalidate_cache()
         prev = self._selected
         self.reload()
         if self._tiles:
@@ -458,6 +579,8 @@ class Panel:
 
     def pin_entry(self, entry_id: int) -> None:
         storage.toggle_pin(entry_id)
+        # A pin moves the entry between tabs, so both views are now stale.
+        self._invalidate_cache()
         self.reload()
 
     def pin_selected(self) -> None:
@@ -507,6 +630,36 @@ class Panel:
             return True
         return False  # let typing flow to the search entry
 
+    def _reset_to_history(self) -> None:
+        self._switching_tab = True
+        try:
+            self._tab = "history"
+            self.tab_history.set_active(True)
+            self.tab_pinned.set_active(False)
+        finally:
+            self._switching_tab = False
+
+    def _on_tab(self, _btn, tab: str) -> None:
+        # Radio behavior across the two toggle buttons. set_active()/set_text()
+        # re-enter their handlers, so guard against the recursive churn — and
+        # keep the search-clear inside the guard so it can't fire a second,
+        # redundant reload.
+        if self._switching_tab:
+            return
+        self._switching_tab = True
+        try:
+            self._tab = tab
+            self.tab_history.set_active(tab == "history")
+            self.tab_pinned.set_active(tab == "pinned")
+            self.search.set_text("")
+        finally:
+            self._switching_tab = False
+        self.reload()
+
+    def _on_search(self, _entry) -> None:
+        if not self._switching_tab:
+            self.reload()
+
     def _on_settings(self, _btn) -> None:
         self.hide()
         self._controller.open_settings()
@@ -515,12 +668,37 @@ class Panel:
     def show(self) -> None:
         self._controller.refresh_theme()
         self._set_active_monitor()
+        self._reset_to_history()
+        # Rebuild from scratch on open: new clips may have been copied (and
+        # retention may have pruned old ones) since the panel was last shown.
+        self._invalidate_cache()
         self.reload()
+        # Force the compositor to route the keyboard to our layer surface no
+        # matter how we were opened. ON_DEMAND alone works for the global
+        # shortcut but NOT for the tray menu — COSMIC won't hand focus to a
+        # layer surface mapped from a menu, leaving the panel stuck (Escape,
+        # click-away and search all need focus). EXCLUSIVE makes the grab
+        # unconditional; we relax to ON_DEMAND a moment later so a real click
+        # elsewhere can still move focus away and dismiss us (_on_focus_out).
+        GtkLayerShell.set_keyboard_mode(
+            self.window, GtkLayerShell.KeyboardMode.EXCLUSIVE
+        )
         self.window.show_all()
         self.action_bar.hide()  # show_all reveals it; keep hidden until invoked
         self._visible = True
         self._shown_at = time.monotonic()
         self.search.grab_focus()
+        GLib.timeout_add(180, self._relax_keyboard)
+
+    def _relax_keyboard(self) -> bool:
+        # Drop back to ON_DEMAND so click-away dismissal works again. This fires
+        # inside the _on_focus_out settle window (0.25s), so if the mode change
+        # momentarily blips focus it's ignored rather than self-dismissing.
+        if self._visible:
+            GtkLayerShell.set_keyboard_mode(
+                self.window, GtkLayerShell.KeyboardMode.ON_DEMAND
+            )
+        return False
 
     def hide(self) -> None:
         self.action_bar.hide()
@@ -540,5 +718,6 @@ class Panel:
             self.hide()
         elif command == "refresh":
             if self._visible:
+                self._invalidate_cache()
                 self.reload()
         return False

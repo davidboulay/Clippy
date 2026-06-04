@@ -179,6 +179,18 @@ def build_css(dark: bool | None = None) -> str:
 
 .count {{ color: {c['dim']}; font-size: 12px; }}
 
+.tab {{
+    background: transparent; color: {c['dim']};
+    border: 1px solid transparent; border-radius: 8px;
+    padding: 3px 12px; min-height: 26px; font-size: 12.5px;
+}}
+.tab:hover {{ background-color: {c['tile_hover']}; color: {c['text']}; }}
+.tab:checked {{
+    background-color: {c['accent_soft']};
+    border-color: {c['accent']};
+    color: {c['text']};
+}}
+
 .action-bar {{
     background-color: {c['accent_soft']};
     border: 1px solid {c['border']};

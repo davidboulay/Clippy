@@ -23,7 +23,7 @@ except (ValueError, ImportError):
     except (ValueError, ImportError):
         _IndicatorModule = None
 
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 
 
 def available() -> bool:
@@ -50,7 +50,11 @@ class Tray:
 
         def add(label, cb):
             mi = Gtk.MenuItem(label=label)
-            mi.connect("activate", lambda _m: cb())
+            # Run the action after the menu has closed. Invoking it inline here
+            # leaves the menu owning the compositor's keyboard grab, so a panel
+            # shown now never gains focus (and so never dismisses on click-away).
+            # Deferring mirrors the IPC path the keyboard shortcut already uses.
+            mi.connect("activate", lambda _m: GLib.idle_add(lambda: (cb(), False)[1]))
             menu.append(mi)
             return mi
 
