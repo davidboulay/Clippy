@@ -12,6 +12,8 @@ from . import config
 DEFAULTS: Dict[str, Any] = {
     "open_at_login": True,
     "sound_on_copy": False,
+    # Which copy sound to play (see sound.SOUND_CHOICES).
+    "sound_choice": "tap",
     "always_plain_text": False,
     "retention": "1m",
     # "system" follows COSMIC's light/dark; or force "dark" / "light".
