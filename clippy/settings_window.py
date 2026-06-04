@@ -15,7 +15,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
-from . import config, settings, setup, storage, updates
+from . import config, settings, setup, sound, storage, updates
 
 _MOD_KEYS = {
     Gdk.KEY_Super_L, Gdk.KEY_Super_R, Gdk.KEY_Control_L, Gdk.KEY_Control_R,
@@ -130,6 +130,32 @@ class SettingsWindow:
             body, "Sound on copy", "Play a short sound whenever you copy.",
             bool(prefs["sound_on_copy"]), self._on_sound,
         )
+
+        sound_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        sound_lbl = Gtk.Label(label="Copy sound")
+        sound_lbl.set_xalign(0.0)
+        sound_lbl.get_style_context().add_class("settings-label")
+        sound_row.pack_start(sound_lbl, True, True, 0)
+        self._sound_choice = Gtk.ComboBoxText()
+        valid_ids = set()
+        for sid, slabel in sound.SOUND_CHOICES:
+            self._sound_choice.append(sid, slabel)
+            valid_ids.add(sid)
+        stored = prefs.get("sound_choice")
+        self._sound_choice.set_active_id(
+            stored if stored in valid_ids else sound.DEFAULT_SOUND
+        )
+        self._sound_choice.connect("changed", self._on_sound_choice)
+        preview = Gtk.Button(label="▶")
+        preview.get_style_context().add_class("iconbtn")
+        preview.set_tooltip_text("Preview")
+        preview.connect(
+            "clicked", lambda _b: sound.play(self._sound_choice.get_active_id())
+        )
+        sound_row.pack_end(preview, False, False, 0)
+        sound_row.pack_end(self._sound_choice, False, False, 0)
+        body.pack_start(sound_row, False, False, 0)
+
         self._switch_row(
             body, "Always paste as plain text",
             "When off, copied formatting is preserved on paste.",
@@ -332,6 +358,12 @@ class SettingsWindow:
 
     def _on_sound(self, active):
         settings.set_value("sound_on_copy", active)
+
+    def _on_sound_choice(self, combo):
+        sid = combo.get_active_id()
+        if sid:
+            settings.set_value("sound_choice", sid)
+            sound.play(sid)  # audition the pick
 
     def _on_plain(self, active):
         settings.set_value("always_plain_text", active)
