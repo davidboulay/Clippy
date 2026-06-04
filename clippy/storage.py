@@ -135,30 +135,39 @@ def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
         return cur.lastrowid
 
 
-def list_entries(query: str = "", limit: int = config.MAX_HISTORY) -> List[Entry]:
+def list_entries(query: str = "", limit: int = config.MAX_HISTORY,
+                 pinned: Optional[bool] = None) -> List[Entry]:
     """Return entries newest-first (pinned first). With a query, only matching
-    text entries are returned."""
+    text entries are returned. ``pinned`` filters by pin state: True for pinned
+    only, False for unpinned only, None for both."""
+    clauses: List[str] = []
+    params: List[object] = []
+    if query:
+        clauses.append("kind='text' AND text LIKE ? COLLATE NOCASE")
+        params.append(f"%{query}%")
+    if pinned is not None:
+        clauses.append("pinned=?")
+        params.append(1 if pinned else 0)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
     with _connect() as conn:
-        if query:
-            rows = conn.execute(
-                """SELECT * FROM entries
-                   WHERE kind='text' AND text LIKE ? COLLATE NOCASE
-                   ORDER BY pinned DESC, created_at DESC LIMIT ?""",
-                (f"%{query}%", limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT * FROM entries
-                   ORDER BY pinned DESC, created_at DESC LIMIT ?""",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(
+            f"""SELECT * FROM entries{where}
+                ORDER BY pinned DESC, created_at DESC LIMIT ?""",
+            params,
+        ).fetchall()
     return [_row_to_entry(r) for r in rows]
 
 
-def count() -> int:
-    """Total number of stored entries (cheap; no row materialization)."""
+def count(pinned: Optional[bool] = None) -> int:
+    """Number of stored entries (cheap; no row materialization). ``pinned``
+    filters by pin state: True for pinned only, False for unpinned only."""
     with _connect() as conn:
-        return conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        if pinned is None:
+            return conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        return conn.execute(
+            "SELECT COUNT(*) FROM entries WHERE pinned=?", (1 if pinned else 0,)
+        ).fetchone()[0]
 
 
 def get(entry_id: int) -> Optional[Entry]:
