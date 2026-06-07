@@ -172,7 +172,10 @@ def _sync_query(engine):
         if engine is None:
             return "err sync is disabled"
         if cmd == "_broadcast":
-            engine.broadcast_latest()
+            if arg.strip():
+                engine.broadcast_id(arg.strip())
+            else:
+                engine.broadcast_latest()
             return "ok"
         if cmd in ("peers", "sync-status"):
             return json.dumps(engine.status())
@@ -200,8 +203,9 @@ def _run_headless(engine) -> int:
 
     def on_change():
         try:
-            if capture_current() and engine is not None:
-                engine.broadcast_latest()
+            eid = capture_current()
+            if eid and engine is not None:
+                engine.broadcast_id(eid)
         except Exception:
             pass
 

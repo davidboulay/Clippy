@@ -74,9 +74,10 @@ def _cmd_store() -> int:
     from . import ipc
     from .capture import capture_current
 
-    if capture_current():
+    entry_id = capture_current()
+    if entry_id:
         ipc.send("refresh")
-        ipc.send("_broadcast")   # let the daemon's sync engine fan it out
+        ipc.send(f"_broadcast {entry_id}")   # broadcast exactly this item
     return 0
 
 

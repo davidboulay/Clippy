@@ -296,29 +296,35 @@ class SyncEngine:
         # Record BEFORE writing the clipboard, so the local watch firing on this
         # write is recognised and not re-broadcast (loop prevention).
         self._seen_add(h)
-        html = env.get("html")
         try:
-            storage.add_text(text, env.get("mime", "text/plain"), html=html)
+            storage.add_text(text, "text/plain")
         except Exception:
             pass
         try:
             from . import clipboard
-            if html:
-                clipboard.copy_html(html)
-            else:
-                clipboard.copy_text(text)
+            clipboard.copy_text(text)   # plain text only (v0)
         except Exception:
             pass
 
-    def broadcast_latest(self) -> None:
-        """Broadcast the newest stored item (called after a local capture)."""
+    def broadcast_id(self, entry_id) -> None:
+        """Broadcast a specific stored item by id (the one just captured)."""
         try:
-            entries = storage.list_entries(limit=1)
+            entry = storage.get(int(entry_id))
         except Exception:
             return
-        if not entries:
+        if entry is not None:
+            self._broadcast_entry(entry)
+
+    def broadcast_latest(self) -> None:
+        """Broadcast the most-recently-created item. Note: list_entries is
+        pinned-first, so prefer broadcast_id(); this is a fallback."""
+        try:
+            entries = sorted(storage.list_entries(limit=50),
+                             key=lambda e: e.created_at, reverse=True)
+        except Exception:
             return
-        self._broadcast_entry(entries[0])
+        if entries:
+            self._broadcast_entry(entries[0])
 
     def _broadcast_entry(self, entry) -> None:
         if getattr(entry, "kind", "") == "image":
@@ -330,10 +336,11 @@ class SyncEngine:
         if self._seen_has(h):
             return  # just received/sent this — don't echo
         self._seen_add(h)
+        # v0 is plain-text only: syncing text/html across platforms leaks raw
+        # markup into plain-text paste targets (rich types are a later stage).
         env = {
             "v": PROTO, "origin": self.device_id, "ts": int(time.time()),
-            "hash": h, "kind": "text", "mime": getattr(entry, "mime", "text/plain"),
-            "text": text, "html": getattr(entry, "html", None),
+            "hash": h, "kind": "text", "mime": "text/plain", "text": text,
         }
         payload = json.dumps(env).encode("utf-8")
         for pid, peer in list(self.trusted.items()):
