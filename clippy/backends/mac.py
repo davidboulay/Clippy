@@ -99,33 +99,58 @@ class MacBackend:
     # -- files ----------------------------------------------------------
     def read_file_paths(self, types: List[str]) -> List[str]:
         import os
+        import urllib.parse
+
+        def _from_url_str(s):
+            try:
+                p = urllib.parse.unquote(urllib.parse.urlparse(str(s)).path)
+                return p if (p and os.path.isfile(p)) else None
+            except Exception:
+                return None
+
         out = []
-        # 1) Legacy Finder file list — the most reliable for "copy" in Finder.
+        # 1) public.file-url per pasteboard item — the reliable path on modern
+        #    macOS (Finder Cmd+C). Handles multi-file selections too.
         try:
-            fl = self._pb.propertyListForType_("NSFilenamesPboardType")
-            if fl:
-                for p in fl:
-                    p = str(p)
-                    if os.path.isfile(p):
-                        out.append(p)
+            for it in (self._pb.pasteboardItems() or []):
+                try:
+                    s = it.stringForType_("public.file-url")
+                except Exception:
+                    s = None
+                p = _from_url_str(s) if s else None
+                if p:
+                    out.append(p)
         except Exception:
             pass
         if out:
             return out
-        # 2) Modern file URLs (public.file-url).
+        # 2) NSURL objects from the pasteboard.
         try:
             from AppKit import NSURL
-            urls = self._pb.readObjectsForClasses_options_([NSURL], None)
-            for u in (urls or []):
+            for u in (self._pb.readObjectsForClasses_options_([NSURL], None) or []):
                 try:
-                    if u.isFileURL():
-                        p = str(u.path())
-                        if os.path.isfile(p):
-                            out.append(p)
+                    if u.isFileURL() and os.path.isfile(str(u.path())):
+                        out.append(str(u.path()))
                 except Exception:
                     pass
         except Exception:
             pass
+        if out:
+            return out
+        # 3) Single public.file-url on the pasteboard, then legacy filenames.
+        try:
+            p = _from_url_str(self._pb.stringForType_("public.file-url"))
+            if p:
+                out.append(p)
+        except Exception:
+            pass
+        if not out:
+            try:
+                for p in (self._pb.propertyListForType_("NSFilenamesPboardType") or []):
+                    if os.path.isfile(str(p)):
+                        out.append(str(p))
+            except Exception:
+                pass
         return out
 
     def copy_file(self, path: str) -> None:
