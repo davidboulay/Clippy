@@ -24,6 +24,7 @@ DB_PATH = DATA_DIR / "history.db"
 IMAGE_DIR = DATA_DIR / "images"
 FILE_DIR = DATA_DIR / "files"           # stored non-image file payloads
 RECV_DIR = DATA_DIR / "received"        # files received from peers (clipboard refs them)
+THUMB_DIR = DATA_DIR / "thumbs"         # cached preview thumbnails (e.g. video frames)
 SOCKET_PATH = RUNTIME_DIR / "clippy.sock"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
@@ -102,5 +103,6 @@ def ensure_dirs() -> None:
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     FILE_DIR.mkdir(parents=True, exist_ok=True)
     RECV_DIR.mkdir(parents=True, exist_ok=True)
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     ICON_THEME_DIR.mkdir(parents=True, exist_ok=True)
