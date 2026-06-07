@@ -38,8 +38,20 @@ Pair with a Linux machine running Clippy ≥ 1.2.0 (Settings → Sync, or
   Clippy → Allow), or pairing/sync will silently fail. Unsigned apps don't
   always get a clean "allow?" prompt — the app shows a one-time reminder, and
   code-signing makes the prompt appear naturally.
-- **Unsigned** builds only run for the user who built them. To share the app,
-  code-sign + notarize with an Apple Developer ID (`codesign` + `notarytool`).
+- **"Unidentified developer"** (Gatekeeper + the Login Items label) is unavoidable
+  for an *unsigned* build. `build-app.sh` **ad-hoc signs** the app by default (a
+  stable local identity so firewall/permission grants persist across rebuilds),
+  but Gatekeeper still shows the label. To remove it entirely you need an Apple
+  **Developer ID** (paid Apple Developer Program) — then build with:
+  ```bash
+  export CLIPPY_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+  export CLIPPY_NOTARY_PROFILE="clippy-notary"   # `xcrun notarytool store-credentials`
+  ./packaging/macos/build-app.sh
+  ```
+  That signs (hardened runtime) + notarizes + staples, so it opens with no warning
+  and shows your name. For **personal use without a paid account**, just
+  right-click → **Open** once (or `xattr -dr com.apple.quarantine Clippy.app`); the
+  Login Items label is cosmetic.
 - macOS has no background clipboard push, so capture is a ~0.4 s `changeCount`
   poll (Linux capture stays instant). macOS 14+ may show "pasted from" notices.
 - iPhone/iPad: use Apple **Universal Clipboard** (same Apple ID, Handoff) with
