@@ -72,6 +72,25 @@ Capture flow (`clippy/capture.py`): checks **files first** (`read_file_paths`) �
 `storage.add_file_from_path(real bytes)`; else image *data* (`add_image`); else text.
 Receiver injects files via `clipboard.copy_file(path)` (saved into `~/.local/share/clippy/received/`).
 
+## OPEN ITEM — image files copied in Finder may lose their filename
+Symptom: copying a `.webp` (seen on macOS) synced as **nameless image DATA**
+(`kind=image`, `filename=None`) → pastes on Linux as "Pasted Image.webp", while
+PNG/JPG/MP4 *files* kept their names (`kind=file`, real `filename`).
+
+Capture (`clippy/capture.py`) is **file-first**: `read_file_paths()` → file branch
+(keeps name) → else image-data branch (no name). So a webp copied **in Finder**
+should hit the file branch. Investigate on the Mac:
+1. Copy a `.webp` FILE in Finder, run `scripts/mac_pb_probe.py` (or the menubar
+   "Clipboard types (debug)"): does the pasteboard carry a resolvable `public.file-url`?
+   Does `read_file_paths([])` return the real path?
+2. If a file-url IS present but `read_file_paths` returns [] → fix the resolution
+   in `backends/mac.py` (the `readObjectsForClasses_([NSURL]) → u.path()` branch).
+3. If a Finder webp copy genuinely offers ONLY image data (a macOS quirk for some
+   formats) → the name can't be recovered; leave as-is (it's correct for image
+   data). Confirm png/jpg/mp4 still keep names (they do today).
+Note: image data copied from an app (Copy Image) legitimately has no filename —
+that case is expected, not a bug.
+
 ## Other macOS items to confirm work (built but never tested on a Mac)
 1. **Menubar icon** — uses the SF Symbol `"paperclip"` as a template image
    (`mac_app.py: _fix_retina_icon`, set 1s after launch via a one-shot rumps.Timer).
