@@ -108,7 +108,8 @@ def run() -> int:
             super().__init__("Clippy", title=None, icon=icon, template=True,
                              quit_button="Quit Clippy")
             self.menu = ["Sync status", None, "Settings…", None,
-                         "Show pairing code", "Enter code…"]
+                         "Show pairing code", "Enter code…", None,
+                         "Clipboard types (debug)"]
             self.menu["Sync status"].set_callback(None)   # info line, not clickable
             self._settings = None
             self._prog = None
@@ -170,6 +171,23 @@ def run() -> int:
                 self._settings.show()
             except Exception as exc:
                 rumps.alert("Clippy", f"Couldn't open Settings: {exc}")
+
+        @rumps.clicked("Clipboard types (debug)")
+        def debug_types(self, _):
+            from .backends import get_backend
+            be = get_backend()
+            try:
+                raw = [str(t) for t in (be._pb.types() or [])]
+            except Exception as exc:
+                raw = [f"(error: {exc})"]
+            try:
+                files = be.read_file_paths(raw)
+            except Exception as exc:
+                files = [f"(error: {exc})"]
+            rumps.alert("Clipboard debug",
+                        "Types on the clipboard:\n  " + "\n  ".join(raw)
+                        + "\n\nDetected file paths:\n  "
+                        + ("\n  ".join(files) if files else "(none)"))
 
         @rumps.clicked("Show pairing code")
         def show_code(self, _):
