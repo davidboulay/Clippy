@@ -52,8 +52,9 @@ def run() -> int:
 
     def on_change():
         try:
-            if capture_current():
-                engine.broadcast_latest()
+            eid = capture_current()
+            if eid:
+                engine.broadcast_id(eid)
         except Exception:
             pass
 

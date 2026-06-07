@@ -8,18 +8,22 @@ from __future__ import annotations
 from . import clipboard, settings, sound, storage
 
 
-def capture_current() -> bool:
-    """Snapshot the current clipboard into history. Returns True if stored."""
+def capture_current():
+    """Snapshot the current clipboard into history.
+
+    Returns the new entry's id (int) if something was stored, else None — the
+    id lets the daemon broadcast exactly this item over sync (not just "the
+    newest", which is pinned-first)."""
     types = clipboard.list_types()
     if not types:
-        return False
+        return None
 
-    stored = False
+    new_id = None
     image_mime = clipboard.pick_image_type(types)
     if image_mime:
         data = clipboard.read_bytes(image_mime)
         if data:
-            stored = storage.add_image(data, image_mime) is not None
+            new_id = storage.add_image(data, image_mime)
     else:
         text_mime = clipboard.pick_text_type(types)
         if text_mime:
@@ -31,15 +35,15 @@ def capture_current() -> bool:
                 html_mime = clipboard.pick_html_type(types)
                 if html_mime:
                     html = clipboard.read_text(html_mime) or None
-                stored = storage.add_text(
+                new_id = storage.add_text(
                     text,
                     text_mime if "/" in text_mime else "text/plain",
                     html=html,
-                ) is not None
+                )
 
-    if stored:
+    if new_id is not None:
         prefs = settings.load()
         if prefs.get("sound_on_copy"):
             sound.play()
         storage.apply_retention()
-    return stored
+    return new_id
