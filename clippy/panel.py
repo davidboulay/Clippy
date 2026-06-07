@@ -11,6 +11,7 @@ from typing import List, Optional
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")  # else an unversioned Gdk import can grab GTK4
 gi.require_version("GtkLayerShell", "0.1")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, GtkLayerShell, Pango  # noqa: E402
@@ -107,13 +108,16 @@ class Tile(Gtk.EventBox):
         self.set_size_request(config.TILE_WIDTH, config.TILE_HEIGHT)
         self.connect("button-press-event", self._on_click)
 
+    _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
+                   "heic", "heif", "avif", "ico", "svg"}
+    _VIDEO_EXTS = {"mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg"}
+
     def _build_content(self, entry: Entry) -> Gtk.Widget:
-        if entry.is_image and entry.image_path:
-            inner = self._load_image(entry.image_path)
-            if inner is None:
-                inner = Gtk.Label(label="[image unavailable]")
-                inner.get_style_context().add_class("preview-text")
-        else:
+        inner = self._render_preview(entry)
+        if inner is None and entry.is_image:
+            inner = Gtk.Label(label="[image unavailable]")
+            inner.get_style_context().add_class("preview-text")
+        if inner is None:
             inner = Gtk.Label()
             inner.set_xalign(0.0)
             inner.set_yalign(0.0)
@@ -152,6 +156,77 @@ class Tile(Gtk.EventBox):
         image.set_valign(Gtk.Align.CENTER)
         image.get_style_context().add_class("preview-image")
         return image
+
+    @staticmethod
+    def _ext(name: str) -> str:
+        import os
+        return os.path.splitext(name or "")[1].lstrip(".").lower()
+
+    def _render_preview(self, entry: Entry) -> Optional[Gtk.Widget]:
+        """A thumbnail for image/video entries, or a file card for other files."""
+        import os
+        path = entry.image_path
+        if not path:
+            return None
+        mime = (entry.mime or "").lower()
+        name = entry.filename or entry.text or ""
+        ext = self._ext(name)
+        # Images (incl. image files synced from a peer) — GdkPixbuf sniffs by
+        # content, so the digest-named blob renders fine.
+        if entry.is_image or mime.startswith("image/") or ext in self._IMAGE_EXTS:
+            img = self._load_image(path)
+            if img is not None:
+                return img
+        # Videos — grab a frame with ffmpeg (cached).
+        if mime.startswith("video/") or ext in self._VIDEO_EXTS:
+            thumb = self._video_thumb(path, entry.hash or os.path.basename(path))
+            if thumb:
+                img = self._load_image(thumb)
+                if img is not None:
+                    return img
+            return self._file_card(name, "VIDEO")
+        # Any other file: a clean type card instead of the raw filename text.
+        if entry.is_file:
+            return self._file_card(name, ext.upper() or "FILE")
+        return None
+
+    @staticmethod
+    def _video_thumb(path: str, key: str) -> Optional[str]:
+        """Extract+cache a single video frame as a thumbnail. ffmpeg, best-effort."""
+        import os
+        import shutil
+        import subprocess
+        if not shutil.which("ffmpeg"):
+            return None
+        out = config.THUMB_DIR / f"{os.path.basename(key)}.jpg"
+        if out.exists():
+            return str(out)
+        try:
+            config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", "1", "-i", path, "-frames:v", "1",
+                 "-vf", "scale='min(206,iw)':-2", "-q:v", "5", str(out)],
+                capture_output=True, timeout=8,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return None
+        return str(out) if out.exists() else None
+
+    def _file_card(self, name: str, label: str) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+        kind = Gtk.Label(label=(label or "FILE")[:6])
+        kind.get_style_context().add_class("badge")
+        kind.get_style_context().add_class("badge-text")
+        box.pack_start(kind, False, False, 0)
+        fn = Gtk.Label(label=name or "file")
+        fn.set_max_width_chars(24)
+        fn.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        fn.set_justify(Gtk.Justification.CENTER)
+        fn.get_style_context().add_class("preview-text")
+        box.pack_start(fn, False, False, 0)
+        return box
 
     def _meta_text(self, entry: Entry) -> str:
         when = _relative_time(entry.created_at)
