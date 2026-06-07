@@ -10,11 +10,17 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 # NOTE: PyGObject, gtk-layer-shell and AppIndicator come from system packages
-# (see README / scripts/install.sh), not from PyPI.
+# (see README / scripts/install.sh), not from PyPI. LAN sync needs PyNaCl +
+# zeroconf — on Linux install the system packages python3-nacl + python3-zeroconf;
+# the extras below are for pip-based installs (e.g. macOS).
 dependencies = []
+
+[project.optional-dependencies]
+sync = ["pynacl", "zeroconf"]
+macos = ["pynacl", "zeroconf", "pyobjc-framework-Cocoa"]
 
 [project.scripts]
 clippy = "clippy.cli:main"
 
 [tool.setuptools]
-packages = ["clippy"]
+packages = ["clippy", "clippy.backends"]

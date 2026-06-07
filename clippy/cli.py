@@ -76,6 +76,54 @@ def _cmd_store() -> int:
 
     if capture_current():
         ipc.send("refresh")
+        ipc.send("_broadcast")   # let the daemon's sync engine fan it out
+    return 0
+
+
+def _cmd_pair(code: str) -> int:
+    import json
+    from . import ipc
+    if not ipc.daemon_running():
+        print("clippy: daemon is not running.", file=sys.stderr)
+        return 1
+    reply = ipc.send(f"pair {code}".strip(), timeout=130)
+    if reply is None:
+        print("clippy: no response from daemon.", file=sys.stderr)
+        return 1
+    if reply.startswith("err"):
+        print(f"clippy: {reply}", file=sys.stderr)
+        return 1
+    try:
+        data = json.loads(reply)
+    except ValueError:
+        print(reply)
+        return 0
+    if "code" in data:
+        print(f"Pairing code: {data['code']}")
+        print("On the other device run:  clippy pair " + data["code"])
+        print("(valid for 2 minutes)")
+        return 0
+    if data.get("ok"):
+        print(f"Paired with {data.get('name', 'device')}.")
+        return 0
+    print(f"clippy: pairing failed — {data.get('error', 'unknown error')}", file=sys.stderr)
+    return 1
+
+
+def _cmd_peers() -> int:
+    import json
+    from . import ipc
+    reply = ipc.send("peers")
+    if reply is None or reply.startswith("err"):
+        print(f"clippy: {reply or 'daemon not running'}", file=sys.stderr)
+        return 1
+    data = json.loads(reply)
+    print(f"This device: {data['device']}  ({data['fingerprint']})")
+    peers = data.get("peers", [])
+    if not peers:
+        print("No paired devices. Run 'clippy pair' to add one.")
+    for p in peers:
+        print(f"  {'●' if p['online'] else '○'} {p['name']}")
     return 0
 
 
@@ -119,6 +167,11 @@ def main(argv=None) -> int:
     sub.add_parser("install-icons", help="install the tray/app icon into the theme")
     sub.add_parser("install-desktop", help="add Clippy to the application list")
 
+    pair_p = sub.add_parser("pair", help="pair this device with another for clipboard sync")
+    pair_p.add_argument("code", nargs="?", default="",
+                        help="the code shown on the other device (omit to show one here)")
+    sub.add_parser("peers", help="list paired sync devices")
+
     clear_p = sub.add_parser("clear", help="wipe clipboard history")
     clear_p.add_argument("--all", action="store_true", help="also remove pinned items")
 
@@ -133,6 +186,10 @@ def main(argv=None) -> int:
         return _cmd_store()
     if args.command == "status":
         return _cmd_status()
+    if args.command == "pair":
+        return _cmd_pair(args.code)
+    if args.command == "peers":
+        return _cmd_peers()
     if args.command == "clear":
         return _cmd_clear(args.all)
     if args.command == "setup-shortcut":

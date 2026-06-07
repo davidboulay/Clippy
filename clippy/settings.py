@@ -24,6 +24,9 @@ DEFAULTS: Dict[str, Any] = {
     "last_update_check": 0,
     # Stored for display; the actual binding lives in COSMIC's config.
     "shortcut": {"modifiers": ["Super"], "key": "v"},
+    # LAN clipboard sync.
+    "sync_enabled": False,
+    "device_name": "",   # empty => fall back to the hostname
 }
 
 
