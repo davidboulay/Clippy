@@ -119,18 +119,33 @@ def run() -> int:
             self._tick_status(None)
 
         def _fix_retina_icon(self, timer):
-            # rumps loads the icon at 1x (blurry on retina). Reload via
-            # initByReferencingFile_ (auto-picks the @2x sibling) at an explicit
-            # point size so the menubar icon is crisp on retina displays.
+            # Use the native SF Symbol "paperclip" — vector, crisp at any density,
+            # and a proper template (solid white/black per menubar theme). Falls
+            # back to the bundled @2x PNG on older macOS.
             timer.stop()
-            if not self._icon_path:
-                return
             try:
-                from AppKit import NSImage, NSMakeSize
-                img = NSImage.alloc().initByReferencingFile_(self._icon_path)
-                img.setTemplate_(True)
-                img.setSize_(NSMakeSize(18.0, 18.0))
-                self._nsapp.nsstatusitem.button().setImage_(img)
+                from AppKit import NSImage
+                img = None
+                try:
+                    img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                        "paperclip", "Clippy")
+                    if img is not None:
+                        try:
+                            from AppKit import NSImageSymbolConfiguration
+                            cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(
+                                15.0, 0.0)
+                            img = img.imageByApplyingSymbolConfiguration_(cfg) or img
+                        except Exception:
+                            pass
+                except Exception:
+                    img = None
+                if img is None and self._icon_path:
+                    from AppKit import NSMakeSize
+                    img = NSImage.alloc().initByReferencingFile_(self._icon_path)
+                    img.setSize_(NSMakeSize(18.0, 18.0))
+                if img is not None:
+                    img.setTemplate_(True)
+                    self._nsapp.nsstatusitem.button().setImage_(img)
             except Exception:
                 pass
 
