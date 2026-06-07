@@ -9,6 +9,10 @@ Lives in the **system tray** (a paperclip), never in the dock. Built for
 **Wayland** (developed on **Pop!_OS 24.04 + COSMIC**; also works on Sway,
 Hyprland, and other wlroots compositors).
 
+Now with **encrypted LAN clipboard sync** across your machines — copy on one
+device, paste on another — including images and files, plus a **macOS menubar
+companion app**. See [Cross-device sync](#cross-device-clipboard-sync).
+
 ![Clippy's clipboard panel at the bottom of the screen](docs/screenshot.png)
 
 ## Features
@@ -31,6 +35,9 @@ Hyprland, and other wlroots compositors).
   Pin/Unpin, Delete.
 - **Pin** items so they survive pruning and sort first.
 - **Search** by typing.
+- **Encrypted LAN sync** (opt-in) — share the clipboard across paired devices on
+  your network: text, images, and **any file** (videos, PDFs…), with previews in
+  the panel and a size cap you control. macOS is supported via a menubar app.
 
 ## Why these technologies?
 
@@ -59,6 +66,42 @@ clippy _store    # internal: wl-paste runs this on every clipboard change
 The shortcut → `toggle` → Unix socket → daemon path is what lets a global key
 open the panel without any forbidden hotkey grab.
 
+## Cross-device clipboard sync
+
+Opt-in, **end-to-end-encrypted** clipboard sync over your LAN — no cloud, no
+account. Copy on one machine, paste on another. Works across **Wayland-Linux and
+macOS** peers.
+
+- **What syncs:** text, images, and **any file** (video, PDF, …). Files arrive
+  as the real file (right name + type), images/videos show a preview tile.
+- **Size cap:** default **512 MiB**, raise up to **2 GiB** in *Settings → Sync*
+  (enforced on both ends). Transfers over ~5 MiB show a progress bar on the sender.
+- **Discovery:** automatic via mDNS (zeroconf); falls back to a manual IP if your
+  network blocks multicast (`clippy pair <code> <ip>`).
+- **Security:** each device has a long-term X25519 identity; **pairing is
+  confirmed with a 6-digit code** (so a man-in-the-middle can't slip in a key);
+  every payload is encrypted + authenticated with NaCl. Only paired devices are
+  accepted; LAN-only.
+
+**Enable + pair:**
+1. *Settings → Sync* → turn on **Sync clipboard over LAN**, restart Clippy.
+2. On one device: **Show pairing code** (CLI: `clippy pair`).
+3. On the other: **Enter code** (CLI: `clippy pair <code>`). Done — `clippy peers`
+   lists paired devices.
+
+**macOS:** ships as a **menubar app** (no history panel — it's a sync peer for
+your Linux machines, with a native Settings window for updates, pairing, and
+start-at-login). Build it on a Mac:
+```bash
+git clone https://github.com/davidboulay/clippy.git && cd clippy
+./packaging/macos/build-app.sh --dmg      # → dist/Clippy.app and dist/Clippy-<ver>.dmg
+```
+See [`packaging/macos/README.md`](packaging/macos/README.md). (Unsigned build —
+right-click → Open the first time; Developer-ID signing/notarization is optional.)
+
+Sync needs `python3-nacl` + `python3-zeroconf` (pulled in by the `.deb`); video
+preview thumbnails use `ffmpeg` if present.
+
 ## Install
 
 ### Ubuntu / Pop!_OS / Debian — recommended
@@ -67,7 +110,7 @@ Download the latest `clippy_*.deb` from the
 **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**, then:
 
 ```bash
-sudo apt install ./clippy_1.0.0_all.deb
+sudo apt install ./clippy_1.3.0_all.deb
 ```
 
 …or fetch it from the terminal with the GitHub CLI:
@@ -105,7 +148,9 @@ yourself instead: `make deb`, then `sudo apt install ./dist/clippy_*.deb` (see
 
 Dependencies: `wl-clipboard`, `python3-gi`, `gir1.2-gtk-3.0`,
 `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
-`gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`.
+`gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
+plus `python3-nacl` + `python3-zeroconf` for sync (`ffmpeg` optional, for video
+preview thumbnails).
 
 ### Set the shortcut
 
@@ -150,7 +195,10 @@ Fixed limits/geometry: `clippy/config.py`. Colors: `clippy/theme.py`.
 Everything stays local:
 
 - `~/.local/share/clippy/history.db` — SQLite history (text + rich html inline)
-- `~/.local/share/clippy/images/` — copied images
+- `~/.local/share/clippy/images/`, `files/`, `received/`, `thumbs/` — copied
+  images, file payloads, files received from peers, and cached previews
+- `~/.local/share/clippy/identity.key` + `peers.json` — sync identity key (0600)
+  and trusted paired devices
 - `~/.local/share/clippy/copy.wav` — synthesized copy sound
 - `$XDG_RUNTIME_DIR/clippy.sock` — control socket (mode 0600)
 
@@ -179,8 +227,12 @@ clippy/
   settings_window.py settings UI + shortcut capture
   tray.py            AppIndicator tray icon
   capture.py         read clipboard → storage (+ sound, retention)
-  clipboard.py       wl-paste / wl-copy wrappers (incl. html)
-  storage.py         SQLite history (+ html column, time retention)
+  clipboard.py       backend dispatch (text/image/file read + write)
+  backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
+  sync.py            encrypted LAN sync engine (mDNS, pairing, streamed media)
+  progress.py        sender transfer-progress window (large media)
+  mac_app.py         macOS menubar app  ·  mac_settings.py  macOS settings window
+  storage.py         SQLite history (+ html column, files, time retention)
   settings.py        JSON preferences
   theme.py           COSMIC light/dark → generated GTK CSS
   sound.py           synthesize + play the copy sound
