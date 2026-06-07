@@ -82,7 +82,7 @@ class SettingsController(NSObject):
 
         y = H - 40
         view.addSubview_(_label("Clippy", 20, y, 200, 22, bold=True, size=16))
-        view.addSubview_(_label(f"Version {config.VERSION}", 20, y - 22, 300, 18, size=11))
+        view.addSubview_(_label(f"Version {updates.current_version()}", 20, y - 22, 300, 18, size=11))
 
         y -= 64
         view.addSubview_(_button("Check for updates", 20, y, 180, 28,
@@ -155,7 +155,7 @@ class SettingsController(NSObject):
             try:
                 res = updates.check()
                 msg = (f"Update available: {res.latest}" if res.update_available
-                       else f"Up to date ({config.VERSION})")
+                       else f"Up to date ({updates.current_version()})")
             except Exception:
                 msg = "Couldn't check (offline?)"
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
