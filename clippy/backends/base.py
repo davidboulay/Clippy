@@ -21,6 +21,14 @@ class ClipboardBackend(Protocol):
     def copy_html(self, html: str) -> None: ...
     def copy_image(self, data: bytes, mime: str) -> None: ...
 
+    def read_file_paths(self, types: List[str]) -> List[str]:
+        """Local file paths the clipboard currently offers (a file copy), or []."""
+        ...
+
+    def copy_file(self, path: str) -> None:
+        """Put a file reference on the clipboard (so apps paste the file)."""
+        ...
+
     def start_watch(self, on_change: Callable[[], None]) -> None:
         """Begin watching for clipboard changes, calling ``on_change`` on each.
 

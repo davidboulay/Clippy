@@ -135,9 +135,30 @@ class SettingsWindow:
         btn_row.pack_start(pair_btn, False, False, 0)
         body.pack_start(btn_row, False, False, 0)
 
+        # Max media size to sync.
+        size_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        size_lbl = Gtk.Label(label="Max media size to sync")
+        size_lbl.set_xalign(0.0)
+        size_lbl.get_style_context().add_class("settings-label")
+        size_row.pack_start(size_lbl, True, True, 0)
+        self._sync_size = Gtk.ComboBoxText()
+        self._size_opts = [("128 MB", 128), ("256 MB", 256), ("512 MB", 512),
+                           ("1 GB", 1024), ("2 GB", 2048)]
+        cur_mb = int(settings.get("sync_max_bytes")) // (1024 * 1024)
+        for label, mb in self._size_opts:
+            self._sync_size.append(str(mb), label)
+        self._sync_size.set_active_id(str(min(self._size_opts, key=lambda o: abs(o[1] - cur_mb))[1]))
+        self._sync_size.connect("changed", self._on_sync_size)
+        size_row.pack_end(self._sync_size, False, False, 0)
+        body.pack_start(size_row, False, False, 0)
+
         self._sync_status_lbl = note("")
         self._sync_peers_lbl = note("")
         self._refresh_peers()
+
+    def _on_sync_size(self, combo):
+        mb = int(combo.get_active_id())
+        settings.set_value("sync_max_bytes", mb * 1024 * 1024)
 
     def _on_sync_enabled(self, active):
         settings.set_value("sync_enabled", active)

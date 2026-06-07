@@ -94,6 +94,36 @@ class WaylandBackend:
     def copy_image(self, data: bytes, mime: str) -> None:
         subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
 
+    # -- files ----------------------------------------------------------
+    _FILE_TYPES = ("x-special/gnome-copied-files", "text/uri-list")
+
+    def read_file_paths(self, types: List[str]) -> List[str]:
+        import urllib.parse
+        low = {t.lower(): t for t in types}
+        for want in self._FILE_TYPES:
+            if want in low:
+                raw = self.read_text(low[want])
+                paths = []
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if line.startswith("file://"):
+                        p = urllib.parse.unquote(urllib.parse.urlparse(line).path)
+                        import os
+                        if os.path.isfile(p):
+                            paths.append(p)
+                if paths:
+                    return paths
+        return []
+
+    def copy_file(self, path: str) -> None:
+        # Offer the file the way file managers expect: a gnome-copied-files list
+        # plus a uri-list, so pasting in Files/Nautilus drops the actual file.
+        import urllib.request
+        uri = urllib.request.pathname2url(path)
+        payload = f"copy\nfile://{uri}".encode("utf-8")
+        subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
+                       input=payload, timeout=15)
+
     def start_watch(self, on_change: Callable[[], None]) -> None:
         # No-op: the daemon spawns `wl-paste --watch ... _store`, which is the
         # capture trigger on Linux.

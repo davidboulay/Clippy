@@ -22,6 +22,8 @@ RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 
 DB_PATH = DATA_DIR / "history.db"
 IMAGE_DIR = DATA_DIR / "images"
+FILE_DIR = DATA_DIR / "files"           # stored non-image file payloads
+RECV_DIR = DATA_DIR / "received"        # files received from peers (clipboard refs them)
 SOCKET_PATH = RUNTIME_DIR / "clippy.sock"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
@@ -31,6 +33,10 @@ SYNC_SERVICE = "_clippy._tcp.local."    # mDNS service type
 KEY_PATH = DATA_DIR / "identity.key"    # long-term X25519 private key (0600)
 PEERS_PATH = DATA_DIR / "peers.json"    # trusted paired peers (0600)
 DEVICE_ID_PATH = DATA_DIR / "device-id" # stable per-device UUID
+SYNC_CHUNK = 1024 * 1024                # streamed media chunk size (1 MiB)
+SYNC_MAX_DEFAULT = 512 * 1024 * 1024    # default media size cap (512 MiB)
+SYNC_MAX_CEILING = 2 * 1024 * 1024 * 1024  # hard ceiling the user can raise to (2 GiB)
+PROGRESS_MIN_DEFAULT = 5 * 1024 * 1024  # show a transfer progress bar above this
 SOUND_PATH = DATA_DIR / "copy.wav"
 # Icon copied into a private theme dir so the tray can reference it by name.
 ICON_THEME_DIR = DATA_DIR / "icons"
@@ -41,6 +47,8 @@ PROJECT_ROOT = PACKAGE_ROOT.parent
 # Icon ships inside the package so it resolves under any install layout
 # (source tree, .deb, Flatpak, AppImage).
 BUNDLED_ICON = PACKAGE_ROOT / "icons" / "clippy.png"
+# macOS menubar template icon (black + alpha; macOS tints it for light/dark).
+MAC_MENUBAR_ICON = PACKAGE_ROOT / "icons" / "clippy-menubar.png"
 
 # Hard safety cap regardless of the time-based retention setting.
 MAX_HISTORY = 1000
@@ -92,5 +100,7 @@ def retention_seconds(key: str):
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    FILE_DIR.mkdir(parents=True, exist_ok=True)
+    RECV_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     ICON_THEME_DIR.mkdir(parents=True, exist_ok=True)

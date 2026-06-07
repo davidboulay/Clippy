@@ -27,8 +27,14 @@ DEFAULTS: Dict[str, Any] = {
     # LAN clipboard sync.
     "sync_enabled": False,
     "device_name": "",   # empty => fall back to the hostname
+    # Largest media payload to sync, in bytes (clamped to config.SYNC_MAX_CEILING).
+    "sync_max_bytes": 512 * 1024 * 1024,
+    # Show a transfer progress bar on the sender above this size (bytes).
+    "progress_min_bytes": 5 * 1024 * 1024,
     # macOS: show the "allow incoming connections" firewall hint once.
     "mac_firewall_hint_shown": False,
+    # macOS: launch at login (default on; installs a LaunchAgent).
+    "start_at_login": True,
 }
 
 
