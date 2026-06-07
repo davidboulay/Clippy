@@ -26,6 +26,18 @@ source "$VENV/bin/activate"
 pip install --quiet --upgrade pip wheel
 pip install --quiet pynacl zeroconf rumps pyobjc-framework-Cocoa py2app
 
+# Regenerate a crisp multi-size app icon from the 512px source (Apple tools).
+ICNS="packaging/macos/clippy.icns"
+SRC="clippy/icons/clippy.png"
+if command -v iconutil >/dev/null && command -v sips >/dev/null && [[ -f "$SRC" ]]; then
+    ISET="$(mktemp -d)/clippy.iconset"; mkdir -p "$ISET"
+    for s in 16 32 128 256 512; do
+        sips -z "$s" "$s" "$SRC" --out "$ISET/icon_${s}x${s}.png" >/dev/null
+        d=$((s * 2)); sips -z "$d" "$d" "$SRC" --out "$ISET/icon_${s}x${s}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$ISET" -o "$ICNS" && echo "==> App icon: regenerated $ICNS"
+fi
+
 rm -rf build dist/Clippy.app
 python packaging/macos/setup_py2app.py py2app
 APP="dist/Clippy.app"
