@@ -70,9 +70,12 @@ class MacBackend:
         return self._pb.stringForType_(uti) or ""
 
     def read_bytes(self, mime: str) -> bytes:
-        uti = _PNG if "png" in mime else _TIFF
-        data = self._pb.dataForType_(uti)
-        return bytes(data) if data is not None else b""
+        order = (_PNG, _TIFF) if "png" in mime else (_TIFF, _PNG)
+        for uti in order:                       # whichever rep the app provided
+            data = self._pb.dataForType_(uti)
+            if data is not None:
+                return bytes(data)
+        return b""
 
     # -- write -----------------------------------------------------------
     def copy_text(self, text: str) -> None:
@@ -96,20 +99,33 @@ class MacBackend:
     # -- files ----------------------------------------------------------
     def read_file_paths(self, types: List[str]) -> List[str]:
         import os
-        from AppKit import NSURL
-        try:
-            urls = self._pb.readObjectsForClasses_options_([NSURL], None) or []
-        except Exception:
-            return []
         out = []
-        for u in urls:
-            try:
-                if u.isFileURL():
-                    p = u.path()
-                    if p and os.path.isfile(p):
-                        out.append(str(p))
-            except Exception:
-                pass
+        # 1) Legacy Finder file list — the most reliable for "copy" in Finder.
+        try:
+            fl = self._pb.propertyListForType_("NSFilenamesPboardType")
+            if fl:
+                for p in fl:
+                    p = str(p)
+                    if os.path.isfile(p):
+                        out.append(p)
+        except Exception:
+            pass
+        if out:
+            return out
+        # 2) Modern file URLs (public.file-url).
+        try:
+            from AppKit import NSURL
+            urls = self._pb.readObjectsForClasses_options_([NSURL], None)
+            for u in (urls or []):
+                try:
+                    if u.isFileURL():
+                        p = str(u.path())
+                        if os.path.isfile(p):
+                            out.append(p)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         return out
 
     def copy_file(self, path: str) -> None:

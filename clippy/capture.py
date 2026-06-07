@@ -26,13 +26,24 @@ def capture_current():
         if data:
             new_id = storage.add_image(data, image_mime)
     elif file_paths:
-        # A copied file (image file, video, PDF, …): store the bytes, not the path.
+        # A copied file (image, video, PDF, …): store the bytes, not the path.
         import mimetypes
         import os
         src = file_paths[0]
         name = os.path.basename(src) or "file"
         mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
-        new_id = storage.add_file_from_path(src, name, mime)
+        try:
+            fsize = os.path.getsize(src)
+        except OSError:
+            fsize = 0
+        # A reasonably-sized image file: store as an image so it pastes as an
+        # image on the other device; everything else (video, PDF, big images)
+        # syncs as a file (streamed from disk).
+        if mime.startswith("image/") and 0 < fsize <= 64 * 1024 * 1024:
+            data = open(src, "rb").read()
+            new_id = storage.add_image(data, mime) if data else None
+        else:
+            new_id = storage.add_file_from_path(src, name, mime)
     else:
         text_mime = clipboard.pick_text_type(types)
         if text_mime:
