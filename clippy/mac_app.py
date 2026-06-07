@@ -112,9 +112,27 @@ def run() -> int:
             self.menu["Sync status"].set_callback(None)   # info line, not clickable
             self._settings = None
             self._prog = None
+            self._icon_path = icon
             rumps.Timer(self._tick_progress, 0.4).start()
             rumps.Timer(self._tick_status, 5).start()
+            rumps.Timer(self._fix_retina_icon, 1).start()  # one-shot (stops itself)
             self._tick_status(None)
+
+        def _fix_retina_icon(self, timer):
+            # rumps loads the icon at 1x (blurry on retina). Reload via
+            # initByReferencingFile_ (auto-picks the @2x sibling) at an explicit
+            # point size so the menubar icon is crisp on retina displays.
+            timer.stop()
+            if not self._icon_path:
+                return
+            try:
+                from AppKit import NSImage, NSMakeSize
+                img = NSImage.alloc().initByReferencingFile_(self._icon_path)
+                img.setTemplate_(True)
+                img.setSize_(NSMakeSize(18.0, 18.0))
+                self._nsapp.nsstatusitem.button().setImage_(img)
+            except Exception:
+                pass
 
         def _tick_status(self, _timer):
             try:
