@@ -17,8 +17,11 @@ APP = [os.path.join(os.path.dirname(__file__), "clippy_mac_main.py")]
 
 OPTIONS = {
     "argv_emulation": False,
-    "packages": ["clippy", "nacl", "zeroconf", "rumps"],
-    "includes": ["AppKit", "Foundation", "objc"],
+    # Recursively bundle these packages (incl. their compiled .so files):
+    #  - nacl + cffi: PyNaCl reaches libsodium through cffi/_cffi_backend
+    #  - zeroconf + ifaddr (+ async_timeout): mDNS discovery
+    "packages": ["clippy", "nacl", "cffi", "zeroconf", "ifaddr", "rumps"],
+    "includes": ["_cffi_backend", "async_timeout", "AppKit", "Foundation", "objc"],
     "plist": {
         "CFBundleName": "Clippy",
         "CFBundleDisplayName": "Clippy",
