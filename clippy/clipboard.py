@@ -53,5 +53,13 @@ def copy_image(data: bytes, mime: str) -> None:
     get_backend().copy_image(data, mime)
 
 
+def read_file_paths(types: List[str]) -> List[str]:
+    return get_backend().read_file_paths(types)
+
+
+def copy_file(path: str) -> None:
+    get_backend().copy_file(path)
+
+
 def start_watch(on_change: Callable[[], None]) -> None:
     get_backend().start_watch(on_change)

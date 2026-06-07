@@ -1,19 +1,71 @@
 """macOS menubar app for Clippy clipboard sync (no CLI, no GTK).
 
-A status-bar item that runs the sync engine + the macOS clipboard backend and
-exposes pairing entirely through the menu — show a code, enter a code, see your
-paired devices. This is the macOS counterpart to the Linux GTK Settings → Sync
-section. Bundled into Clippy.app via packaging/macos.
+A template menubar icon (auto light/dark) that runs the sync engine + the macOS
+clipboard backend. Pairing, updates, and Start-at-login live in a native
+Settings window (clippy/mac_settings.py); quick pairing is also in the menu.
+Survives sleep/wake by restarting discovery on NSWorkspaceDidWake.
 
 Requires: rumps, pynacl, zeroconf, pyobjc (see packaging/macos/build-app.sh).
 Untested on Linux CI — validate on a Mac.
 """
 from __future__ import annotations
 
+import os
 import threading
 
-from . import settings, sync
+from . import config, settings, sync
 from .capture import capture_current
+
+_LOGIN_LABEL = "io.github.davidboulay.Clippy"
+_LOGIN_PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{_LOGIN_LABEL}.plist")
+
+
+# -- Start at login (LaunchAgent) ---------------------------------------
+def login_installed() -> bool:
+    return os.path.exists(_LOGIN_PLIST)
+
+
+def set_login_item(enabled: bool) -> None:
+    import plistlib
+    import shlex
+    if not enabled:
+        os.system(f"launchctl unload {shlex.quote(_LOGIN_PLIST)} 2>/dev/null")
+        try:
+            os.unlink(_LOGIN_PLIST)
+        except OSError:
+            pass
+        return
+    try:
+        from Foundation import NSBundle
+        bundle = str(NSBundle.mainBundle().bundlePath())
+    except Exception:
+        bundle = "/Applications/Clippy.app"
+    os.makedirs(os.path.dirname(_LOGIN_PLIST), exist_ok=True)
+    data = {"Label": _LOGIN_LABEL,
+            "ProgramArguments": ["/usr/bin/open", bundle],
+            "RunAtLoad": True}
+    with open(_LOGIN_PLIST, "wb") as f:
+        plistlib.dump(data, f)
+    os.system(f"launchctl load {shlex.quote(_LOGIN_PLIST)} 2>/dev/null")
+
+
+def _install_wake_observer(engine):
+    """Restart discovery/sockets when the Mac wakes (mDNS + TCP go stale)."""
+    try:
+        from AppKit import NSWorkspace
+        from Foundation import NSObject
+
+        class _Waker(NSObject):
+            def wake_(self, _note):
+                engine.restart_network()
+
+        waker = _Waker.alloc().init()
+        nc = NSWorkspace.sharedWorkspace().notificationCenter()
+        nc.addObserver_selector_name_object_(
+            waker, b"wake:", "NSWorkspaceDidWakeNotification", None)
+        return waker  # caller keeps a reference so it isn't GC'd
+    except Exception:
+        return None
 
 
 def run() -> int:
@@ -29,24 +81,79 @@ def run() -> int:
                     + (sync.import_error() or "pynacl / zeroconf missing"))
         return 1
 
-    # Sync is the whole point of the Mac app — enable it by default.
     if not settings.get("sync_enabled"):
         settings.set_value("sync_enabled", True)
 
     engine = sync.SyncEngine()
+
+    class ClippyApp(rumps.App):
+        def __init__(self):
+            icon = str(config.MAC_MENUBAR_ICON) if config.MAC_MENUBAR_ICON.exists() else None
+            super().__init__("Clippy", title=None, icon=icon, template=True,
+                             quit_button="Quit Clippy")
+            self.menu = ["Settings…", None, "Show pairing code", "Enter code…"]
+            self._settings = None
+            self._prog = None
+            rumps.Timer(self._tick_progress, 0.4).start()
+
+        @rumps.clicked("Settings…")
+        def open_settings(self, _):
+            try:
+                from .mac_settings import SettingsController
+                if self._settings is None:
+                    self._settings = SettingsController.alloc().initWithEngine_(engine)
+                self._settings.show()
+            except Exception as exc:
+                rumps.alert("Clippy", f"Couldn't open Settings: {exc}")
+
+        @rumps.clicked("Show pairing code")
+        def show_code(self, _):
+            code = engine.enter_pairing()
+            rumps.alert("Clippy pairing code",
+                        f"Enter this on the other device within 2 minutes:\n\n        {code}")
+
+        @rumps.clicked("Enter code…")
+        def enter_code(self, _):
+            resp = rumps.Window(title="Pair a device",
+                                message="Enter the code shown on the other device:",
+                                dimensions=(120, 22), ok="Pair", cancel="Cancel").run()
+            if not resp.clicked or not resp.text.strip():
+                return
+            code = resp.text.strip()
+
+            def work():
+                res = engine.join_pairing(code)
+                rumps.alert("Clippy", f"Paired with {res.get('name', 'device')}."
+                            if res.get("ok") else
+                            f"Pairing failed: {res.get('error', 'unknown error')}")
+            threading.Thread(target=work, daemon=True).start()
+
+        # progress shown in the menubar title (set from a worker thread, applied
+        # on the main thread by this timer)
+        def on_progress(self, name, sent, total, done):
+            self._prog = None if done else (int(sent / total * 100) if total else 0)
+
+        def _tick_progress(self, _timer):
+            self.title = f"⬆ {self._prog}%" if self._prog is not None else None
+
+    app = ClippyApp()
+    engine._on_progress = app.on_progress
     engine.start()
 
-    # Unsigned apps don't always get a clean macOS firewall prompt, and a blocked
-    # incoming port silently breaks pairing. Nudge the user once.
+    # First run: honor Start-at-login (default on).
+    if settings.get("start_at_login") and not login_installed():
+        try:
+            set_login_item(True)
+        except Exception:
+            pass
+
+    # Firewall reminder once (unsigned apps don't get a reliable prompt).
     if not settings.get("mac_firewall_hint_shown"):
         try:
-            rumps.alert(
-                title="Allow Clippy through the firewall",
-                message="If macOS asks, click “Allow” so devices can reach Clippy.\n\n"
-                        "If pairing ever fails, check:\n"
-                        "System Settings → Network → Firewall → Options →\n"
-                        "make sure Clippy is set to allow incoming connections.",
-            )
+            rumps.alert("Allow Clippy through the firewall",
+                        "If macOS asks, click “Allow” so devices can reach Clippy.\n\n"
+                        "If pairing fails: System Settings → Network → Firewall →\n"
+                        "Options → allow Clippy to accept incoming connections.")
         finally:
             settings.set_value("mac_firewall_hint_shown", True)
 
@@ -58,80 +165,12 @@ def run() -> int:
         except Exception:
             pass
 
-    # Snapshot what's already on the pasteboard, then poll for changes.
-    from . import clipboard
     capture_current()
+    from . import clipboard
     clipboard.start_watch(on_change)
+    run._waker = _install_wake_observer(engine)   # keep a strong ref
 
-    class ClippyApp(rumps.App):
-        def __init__(self):
-            super().__init__("Clippy", quit_button="Quit Clippy")
-            self.menu = [
-                "Show pairing code",
-                "Enter code…",
-                None,
-                "Paired devices",
-            ]
-            self.menu["Paired devices"].set_callback(None)  # header, not clickable
-            self._refresh()
-            rumps.Timer(self._tick, 5).start()
-
-        # -- pairing -----------------------------------------------------
-        @rumps.clicked("Show pairing code")
-        def show_code(self, _):
-            code = engine.enter_pairing()
-            rumps.alert(
-                title="Clippy pairing code",
-                message=f"Enter this code on the other device within 2 minutes:\n\n"
-                        f"        {code}",
-            )
-
-        @rumps.clicked("Enter code…")
-        def enter_code(self, _):
-            resp = rumps.Window(
-                title="Pair a device",
-                message="Enter the code shown on the other device:",
-                dimensions=(120, 22),
-                ok="Pair", cancel="Cancel",
-            ).run()
-            if not resp.clicked:
-                return
-            code = resp.text.strip()
-            if not code:
-                return
-
-            def work():
-                res = engine.join_pairing(code)
-                msg = (f"Paired with {res.get('name', 'device')}."
-                       if res.get("ok") else
-                       f"Pairing failed: {res.get('error', 'unknown error')}")
-                rumps.alert("Clippy", msg)
-                self._refresh()
-
-            threading.Thread(target=work, daemon=True).start()
-
-        # -- status ------------------------------------------------------
-        def _tick(self, _timer):
-            self._refresh()
-
-        def _refresh(self):
-            st = engine.status()
-            header = self.menu["Paired devices"]
-            header.title = f"Paired devices ({len(st['peers'])})"
-            # Drop previously-added peer rows, then re-add the current set.
-            for key in [k for k in list(self.menu.keys()) if k.startswith("  ")]:
-                del self.menu[key]
-            if not st["peers"]:
-                self.menu.insert_after("Paired devices", "  (none yet)")
-            else:
-                anchor = "Paired devices"
-                for p in st["peers"]:
-                    label = f"  {'●' if p['online'] else '○'} {p['name']}"
-                    self.menu.insert_after(anchor, label)
-                    self.menu[label].set_callback(None)
-                    anchor = label
-
-    ClippyApp().run()
+    app.run()
     engine.stop()
     return 0
 

@@ -93,6 +93,32 @@ class MacBackend:
         self._pb.setData_forType_(nsdata, uti)
         self._last_change = self._pb.changeCount()
 
+    # -- files ----------------------------------------------------------
+    def read_file_paths(self, types: List[str]) -> List[str]:
+        import os
+        from AppKit import NSURL
+        try:
+            urls = self._pb.readObjectsForClasses_options_([NSURL], None) or []
+        except Exception:
+            return []
+        out = []
+        for u in urls:
+            try:
+                if u.isFileURL():
+                    p = u.path()
+                    if p and os.path.isfile(p):
+                        out.append(str(p))
+            except Exception:
+                pass
+        return out
+
+    def copy_file(self, path: str) -> None:
+        from AppKit import NSURL
+        url = NSURL.fileURLWithPath_(path)
+        self._pb.clearContents()
+        self._pb.writeObjects_([url])
+        self._last_change = self._pb.changeCount()
+
     # -- watch (poll changeCount) ---------------------------------------
     def start_watch(self, on_change: Callable[[], None]) -> None:
         if self._watch_thread is not None:

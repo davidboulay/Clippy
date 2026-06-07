@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import struct
+import sys
 import threading
 import time
 import uuid
@@ -78,6 +79,23 @@ def _recv_frame(sock: socket.socket) -> Optional[dict]:
         return None
 
 
+def _send_raw(sock: socket.socket, data: bytes) -> None:
+    """Length-prefixed raw bytes frame (used for streamed media chunks)."""
+    sock.sendall(struct.pack(">I", len(data)) + data)
+
+
+def _recv_raw(sock: socket.socket) -> Optional[bytes]:
+    hdr = _recv_exact(sock, 4)
+    if not hdr:
+        return None
+    (length,) = struct.unpack(">I", hdr)
+    if length == 0:
+        return b""                       # end-of-stream marker
+    if length > 64 * 1024 * 1024:
+        return None
+    return _recv_exact(sock, length)
+
+
 def _recv_exact(sock: socket.socket, n: int) -> Optional[bytes]:
     buf = b""
     while len(buf) < n:
@@ -104,8 +122,10 @@ def _local_ip() -> str:
 
 class SyncEngine:
     def __init__(self, on_status: Optional[Callable[[], None]] = None,
-                 port: Optional[int] = None, state_dir=None):
+                 port: Optional[int] = None, state_dir=None,
+                 on_progress: Optional[Callable] = None):
         self._on_status = on_status
+        self._on_progress = on_progress   # (name, sent, total, done) for big sends
         self._lock = threading.Lock()
         self._seen: "OrderedDict[str, float]" = OrderedDict()
         self._server: Optional[socket.socket] = None
@@ -197,6 +217,49 @@ class SyncEngine:
             except OSError:
                 pass
 
+    def restart_network(self) -> None:
+        """Re-establish discovery + the listening socket — e.g. after the
+        machine wakes from sleep, when mDNS and sockets often go stale."""
+        if not sync_available() or self._priv is None:
+            return
+        try:
+            if self._zc is not None:
+                self._zc.close()
+        except Exception:
+            pass
+        self._zc = self._browser = None
+        try:
+            if self._server is not None:
+                self._server.close()   # makes the old _serve accept() break out
+        except OSError:
+            pass
+        self._peers_online.clear()
+        try:
+            self._running = True
+            self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._server.bind(("0.0.0.0", self.port))
+            self._server.listen(16)
+            threading.Thread(target=self._serve, daemon=True).start()
+            self._advertise()
+            print("[clippy-sync] network restarted (wake/resume)", file=sys.stderr)
+        except Exception as exc:
+            print(f"[clippy-sync] restart failed: {exc}", file=sys.stderr)
+
+    def readvertise(self) -> None:
+        """Cheap mDNS refresh (no socket teardown) — call periodically so peers
+        that dropped off rediscover us. Safe if discovery isn't up."""
+        if not _HAVE_ZC or self._zc is None or self._info is None:
+            return
+        try:
+            self._zc.update_service(self._info)
+        except Exception:
+            try:
+                self._zc.unregister_service(self._info)
+                self._zc.register_service(self._info)
+            except Exception:
+                pass
+
     # -- discovery (mDNS) ------------------------------------------------
     def _advertise(self) -> None:
         if not _HAVE_ZC:
@@ -267,6 +330,9 @@ class SyncEngine:
                 self._handle_pair_server(conn, frame)
             elif kind == "sync":
                 self._handle_sync(frame)
+            elif kind == "media":
+                conn.settimeout(120)     # a large transfer can take a while
+                self._handle_media(conn, frame)
 
     # -- sync transport --------------------------------------------------
     def _handle_sync(self, frame: dict) -> None:
@@ -306,6 +372,89 @@ class SyncEngine:
         except Exception:
             pass
 
+    # -- media receive (streamed) ----------------------------------------
+    def _handle_media(self, conn, frame) -> None:
+        sender = frame.get("from")
+        peer = self.trusted.get(sender)
+        if not peer:
+            return
+        try:
+            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
+            manifest = json.loads(box.decrypt(bytes.fromhex(frame["box"])).decode("utf-8"))
+        except Exception:
+            return
+        h = manifest.get("hash")
+        size = int(manifest.get("size", 0))
+        if not h or self._seen_has(h):
+            return
+        if size <= 0 or size > settings.get("sync_max_bytes"):
+            return  # over the cap (or empty) -> refuse
+        import hashlib as _hl
+        import os
+        import tempfile
+        fd, tmp = tempfile.mkstemp(prefix="clippy-recv-")
+        os.close(fd)
+        received, hasher = 0, _hl.sha256()
+        try:
+            with open(tmp, "wb") as out:
+                while received < size:
+                    enc = _recv_raw(conn)
+                    if not enc:           # None or b"" (end/closed)
+                        break
+                    chunk = box.decrypt(enc)
+                    out.write(chunk)
+                    hasher.update(chunk)
+                    received += len(chunk)
+        except Exception:
+            self._safe_unlink(tmp)
+            return
+        if received != size or hasher.hexdigest() != h:
+            self._safe_unlink(tmp)        # incomplete / corrupt
+            return
+        self._seen_add(h)                 # before inject (loop prevention)
+        self._store_and_inject_media(manifest, tmp)
+
+    def _store_and_inject_media(self, manifest, tmp) -> None:
+        import os
+        import shutil
+        from . import clipboard
+        kind = manifest.get("kind")
+        mime = manifest.get("mime") or "application/octet-stream"
+        name = os.path.basename(manifest.get("name") or "file") or "file"
+        try:
+            if kind == "image":
+                data = open(tmp, "rb").read()
+                storage.add_image(data, mime)
+                clipboard.copy_image(data, mime)
+                self._safe_unlink(tmp)
+            else:
+                dest = self._unique_path(config.RECV_DIR / name)
+                shutil.move(tmp, dest)
+                storage.add_file_from_path(str(dest), name, mime)
+                clipboard.copy_file(str(dest))
+        except Exception:
+            self._safe_unlink(tmp)
+
+    @staticmethod
+    def _unique_path(path):
+        import os
+        path = str(path)
+        if not os.path.exists(path):
+            return path
+        base, ext = os.path.splitext(path)
+        i = 1
+        while os.path.exists(f"{base} ({i}){ext}"):
+            i += 1
+        return f"{base} ({i}){ext}"
+
+    @staticmethod
+    def _safe_unlink(p):
+        import os
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+
     def broadcast_id(self, entry_id) -> None:
         """Broadcast a specific stored item by id (the one just captured)."""
         try:
@@ -326,34 +475,58 @@ class SyncEngine:
         if entries:
             self._broadcast_entry(entries[0])
 
-    def _broadcast_entry(self, entry) -> None:
-        if getattr(entry, "kind", "") == "image":
-            return  # v0: text only
-        text = getattr(entry, "text", None)
-        if not text:
-            return
-        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        if self._seen_has(h):
-            return  # just received/sent this — don't echo
-        self._seen_add(h)
-        # v0 is plain-text only: syncing text/html across platforms leaks raw
-        # markup into plain-text paste targets (rich types are a later stage).
-        env = {
-            "v": PROTO, "origin": self.device_id, "ts": int(time.time()),
-            "hash": h, "kind": "text", "mime": "text/plain", "text": text,
-        }
-        payload = json.dumps(env).encode("utf-8")
+    def _peer_targets(self):
+        """Yield (peer, ip, port) for each paired peer we can reach (mDNS first,
+        stored address as the mDNS-free fallback)."""
         for pid, peer in list(self.trusted.items()):
             online = self._peers_online.get(pid)
             if online:
-                ip, port = online[0], online[1]
+                yield peer, online[0], online[1]
             elif peer.get("addr"):
-                ip, port = peer["addr"], config.SYNC_PORT   # mDNS-free fallback
-            else:
-                continue
-            threading.Thread(
-                target=self._send_to, args=(ip, port, peer, payload), daemon=True
-            ).start()
+                yield peer, peer["addr"], config.SYNC_PORT
+
+    def _broadcast_entry(self, entry) -> None:
+        h = getattr(entry, "hash", None)
+        if not h or self._seen_has(h):
+            return  # just received/sent this — don't echo
+        kind = getattr(entry, "kind", "text")
+        if kind == "text":
+            text = getattr(entry, "text", None)
+            if not text:
+                return
+            self._seen_add(h)
+            env = {"v": PROTO, "origin": self.device_id, "ts": int(time.time()),
+                   "hash": h, "kind": "text", "mime": "text/plain", "text": text}
+            payload = json.dumps(env).encode("utf-8")
+            for peer, ip, port in self._peer_targets():
+                threading.Thread(target=self._send_to, args=(ip, port, peer, payload),
+                                 daemon=True).start()
+            return
+        # media (image / file): stream the on-disk blob, capped + integrity-checked.
+        import os
+        blob = getattr(entry, "image_path", None)
+        if not blob or not os.path.exists(blob):
+            return
+        size = getattr(entry, "size", 0) or os.path.getsize(blob)
+        if size > settings.get("sync_max_bytes"):
+            try:
+                from . import setup  # notify helper lives outside; fall back to print
+            except Exception:
+                pass
+            print(f"[clippy-sync] '{getattr(entry,'filename',None) or kind}' "
+                  f"({size} B) exceeds the sync size limit — not sent.")
+            return
+        targets = list(self._peer_targets())
+        if not targets:
+            return  # nothing paired/online -> no transfer, no progress bar
+        self._seen_add(h)
+        manifest = {"v": PROTO, "origin": self.device_id, "hash": h, "kind": kind,
+                    "mime": getattr(entry, "mime", None) or "application/octet-stream",
+                    "name": getattr(entry, "filename", None) or os.path.basename(blob),
+                    "size": size}
+        for peer, ip, port in targets:
+            threading.Thread(target=self._send_media_to,
+                             args=(ip, port, peer, blob, manifest), daemon=True).start()
 
     def _send_to(self, ip, port, peer, payload: bytes) -> None:
         try:
@@ -363,6 +536,36 @@ class SyncEngine:
                 _send_frame(s, {"type": "sync", "from": self.device_id, "box": bytes(enc).hex()})
         except Exception:
             pass
+
+    def _send_media_to(self, ip, port, peer, blob, manifest) -> None:
+        """Stream an on-disk blob to one peer as encrypted chunks, with progress."""
+        total = manifest["size"]
+        name = manifest["name"]
+        show = (self._on_progress is not None
+                and total > settings.get("progress_min_bytes"))
+        sent = 0
+        try:
+            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
+            with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
+                s.settimeout(120)
+                _send_frame(s, {"type": "media", "from": self.device_id,
+                                "box": bytes(box.encrypt(
+                                    json.dumps(manifest).encode("utf-8"))).hex()})
+                with open(blob, "rb") as f:
+                    while True:
+                        chunk = f.read(config.SYNC_CHUNK)
+                        if not chunk:
+                            break
+                        _send_raw(s, bytes(box.encrypt(chunk)))
+                        sent += len(chunk)
+                        if show:
+                            self._on_progress(name, sent, total, False)
+                _send_raw(s, b"")          # end-of-stream marker
+            if show:
+                self._on_progress(name, total, total, True)
+        except Exception:
+            if show:
+                self._on_progress(name, sent, total, True)  # close the bar on failure
 
     # -- seen-hash LRU ---------------------------------------------------
     def _seen_has(self, h: str) -> bool:

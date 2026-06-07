@@ -20,11 +20,12 @@ from . import config, settings
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind        TEXT    NOT NULL,            -- 'text' | 'image'
+    kind        TEXT    NOT NULL,            -- 'text' | 'image' | 'file'
     text        TEXT,                        -- plain text (text entries)
     html        TEXT,                        -- rich text, if the source had it
     mime        TEXT,                        -- source MIME type
-    image_path  TEXT,                        -- file path (image entries)
+    image_path  TEXT,                        -- blob file path (image/file entries)
+    filename    TEXT,                        -- original name (file entries)
     hash        TEXT    NOT NULL UNIQUE,     -- sha256 of content
     size        INTEGER NOT NULL DEFAULT 0,  -- bytes
     pinned      INTEGER NOT NULL DEFAULT 0,
@@ -46,10 +47,16 @@ class Entry:
     pinned: bool
     size: int
     created_at: float
+    filename: Optional[str] = None
+    hash: Optional[str] = None
 
     @property
     def is_image(self) -> bool:
         return self.kind == "image"
+
+    @property
+    def is_file(self) -> bool:
+        return self.kind == "file"
 
     @property
     def has_formatting(self) -> bool:
@@ -70,6 +77,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(entries)")}
     if "html" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN html TEXT")
+    if "filename" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN filename TEXT")
 
 
 def _row_to_entry(row: sqlite3.Row) -> Entry:
@@ -83,6 +92,8 @@ def _row_to_entry(row: sqlite3.Row) -> Entry:
         pinned=bool(row["pinned"]),
         size=row["size"],
         created_at=row["created_at"],
+        filename=row["filename"] if "filename" in row.keys() else None,
+        hash=row["hash"] if "hash" in row.keys() else None,
     )
 
 
@@ -108,7 +119,7 @@ def add_text(text: str, mime: str = "text/plain", html: Optional[str] = None) ->
 
 def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
     """Store an image entry. The bytes are written to a file in IMAGE_DIR."""
-    if not data or len(data) > config.MAX_IMAGE_BYTES:
+    if not data or len(data) > config.SYNC_MAX_CEILING:
         return None
     digest = hashlib.sha256(data).hexdigest()
     now = time.time()
@@ -130,6 +141,70 @@ def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
             """INSERT INTO entries (kind, mime, image_path, hash, size, created_at)
                VALUES ('image', ?, ?, ?, ?, ?)""",
             (mime, str(path), digest, len(data), now),
+        )
+        _prune_count(conn)
+        return cur.lastrowid
+
+
+def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> Optional[int]:
+    """Store an arbitrary file entry. Bytes written to FILE_DIR, original name kept."""
+    if not data or len(data) > config.SYNC_MAX_CEILING:
+        return None
+    digest = hashlib.sha256(data).hexdigest()
+    now = time.time()
+    path = config.FILE_DIR / digest        # content-addressed blob
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT id FROM entries WHERE hash=?", (digest,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE entries SET created_at=? WHERE id=?", (now, existing["id"])
+            )
+            return existing["id"]
+        if not path.exists():
+            path.write_bytes(data)
+        cur = conn.execute(
+            """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
+               VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
+            (name, mime, str(path), name, digest, len(data), now),
+        )
+        _prune_count(conn)
+        return cur.lastrowid
+
+
+def add_file_from_path(src: str, name: str,
+                       mime: str = "application/octet-stream") -> Optional[int]:
+    """Store a copied file by streaming it (no full in-RAM read, so 2 GB works)."""
+    import os
+    import shutil
+    try:
+        size = os.path.getsize(src)
+    except OSError:
+        return None
+    if size <= 0 or size > config.SYNC_MAX_CEILING:
+        return None
+    h = hashlib.sha256()
+    with open(src, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    digest = h.hexdigest()
+    now = time.time()
+    path = config.FILE_DIR / digest
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT id FROM entries WHERE hash=?", (digest,)
+        ).fetchone()
+        if existing:
+            conn.execute("UPDATE entries SET created_at=? WHERE id=?",
+                         (now, existing["id"]))
+            return existing["id"]
+        if not path.exists():
+            shutil.copyfile(src, path)
+        cur = conn.execute(
+            """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
+               VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
+            (name, mime, str(path), name, digest, size, now),
         )
         _prune_count(conn)
         return cur.lastrowid

@@ -56,6 +56,7 @@ class AppController:
 
     def __init__(self, engine=None):
         self.sync = engine  # SyncEngine or None; used by the settings Sync UI
+        self._progress = None
         from gi.repository import Gdk, Gtk
 
         self._gtk = Gtk
@@ -105,6 +106,14 @@ class AppController:
         self._sync_autostart()
         if self.panel._visible:
             self.panel.reload()
+
+    def progress_update(self, name, sent, total, done) -> bool:
+        """Sender-side transfer progress (called via GLib.idle_add)."""
+        if self._progress is None:
+            from .progress import ProgressManager
+            self._progress = ProgressManager()
+        self._progress.update(name, sent, total, done)
+        return False
 
     def quit(self) -> None:
         self._gtk.main_quit()
@@ -253,6 +262,14 @@ def run_daemon() -> int:
     from gi.repository import GLib, Gtk  # noqa: E402
 
     controller = AppController(engine)
+
+    # Sender-side transfer progress (big media): hop onto the GTK thread.
+    if engine is not None:
+        engine._on_progress = (
+            lambda name, sent, total, done:
+            GLib.idle_add(controller.progress_update, name, sent, total, done))
+        # Keep our mDNS presence fresh so peers re-discover us after blips.
+        GLib.timeout_add_seconds(180, lambda: (engine.readvertise(), True)[1])
 
     server = ipc.Server(
         handler=lambda cmd: GLib.idle_add(controller.handle_command, cmd),

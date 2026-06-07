@@ -20,10 +20,19 @@ def capture_current():
 
     new_id = None
     image_mime = clipboard.pick_image_type(types)
+    file_paths = [] if image_mime else clipboard.read_file_paths(types)
     if image_mime:
         data = clipboard.read_bytes(image_mime)
         if data:
             new_id = storage.add_image(data, image_mime)
+    elif file_paths:
+        # A copied file (image file, video, PDF, …): store the bytes, not the path.
+        import mimetypes
+        import os
+        src = file_paths[0]
+        name = os.path.basename(src) or "file"
+        mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
+        new_id = storage.add_file_from_path(src, name, mime)
     else:
         text_mime = clipboard.pick_text_type(types)
         if text_mime:
