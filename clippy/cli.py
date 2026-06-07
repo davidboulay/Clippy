@@ -80,13 +80,13 @@ def _cmd_store() -> int:
     return 0
 
 
-def _cmd_pair(code: str) -> int:
+def _cmd_pair(code: str, host: str = "") -> int:
     import json
     from . import ipc
     if not ipc.daemon_running():
         print("clippy: daemon is not running.", file=sys.stderr)
         return 1
-    reply = ipc.send(f"pair {code}".strip(), timeout=130)
+    reply = ipc.send(f"pair {code} {host}".strip(), timeout=130)
     if reply is None:
         print("clippy: no response from daemon.", file=sys.stderr)
         return 1
@@ -170,6 +170,8 @@ def main(argv=None) -> int:
     pair_p = sub.add_parser("pair", help="pair this device with another for clipboard sync")
     pair_p.add_argument("code", nargs="?", default="",
                         help="the code shown on the other device (omit to show one here)")
+    pair_p.add_argument("host", nargs="?", default="",
+                        help="other device's IP address (use if mDNS discovery fails)")
     sub.add_parser("peers", help="list paired sync devices")
 
     clear_p = sub.add_parser("clear", help="wipe clipboard history")
@@ -187,7 +189,7 @@ def main(argv=None) -> int:
     if args.command == "status":
         return _cmd_status()
     if args.command == "pair":
-        return _cmd_pair(args.code)
+        return _cmd_pair(args.code, args.host)
     if args.command == "peers":
         return _cmd_peers()
     if args.command == "clear":
