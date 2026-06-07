@@ -25,17 +25,25 @@ from typing import Callable, Dict, Optional
 
 from . import config, settings, storage
 
+_IMPORT_ERROR = ""
 try:
     from nacl.public import Box, PrivateKey, PublicKey
     _HAVE_NACL = True
-except Exception:  # pragma: no cover - dependency missing
+except Exception as _e:  # pragma: no cover - dependency missing
     _HAVE_NACL = False
+    _IMPORT_ERROR += f"nacl: {_e!r}  "
 
 try:
     from zeroconf import ServiceBrowser, ServiceInfo, Zeroconf
     _HAVE_ZC = True
-except Exception:  # pragma: no cover
+except Exception as _e:  # pragma: no cover
     _HAVE_ZC = False
+    _IMPORT_ERROR += f"zeroconf: {_e!r}"
+
+
+def import_error() -> str:
+    """Why sync is unavailable (the real ImportError), for diagnostics."""
+    return _IMPORT_ERROR.strip()
 
 PROTO = 1
 _PAIR_TRANSCRIPT = b"clippy-pair-v1"

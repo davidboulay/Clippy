@@ -24,7 +24,9 @@ def run() -> int:
         return 1
 
     if not sync.sync_available():
-        rumps.alert("Clippy", "Sync needs pynacl + zeroconf. Reinstall the app.")
+        rumps.alert("Clippy — sync unavailable",
+                    "The sync libraries failed to load inside the app:\n\n"
+                    + (sync.import_error() or "pynacl / zeroconf missing"))
         return 1
 
     # Sync is the whole point of the Mac app — enable it by default.
