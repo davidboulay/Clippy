@@ -38,19 +38,25 @@ open dist/Clippy.app                   # or run unbundled for fast iteration (be
   it; the user has declined paid Apple Developer signing. `build-app.sh` already
   ad-hoc signs and supports `CLIPPY_SIGN_IDENTITY`/`CLIPPY_NOTARY_PROFILE` if ever wanted.
 
-## THE CURRENT BUG (top priority)
-**Copying a file in Finder syncs the *filename text*, not the file** (and copying an
-image file produced a fixed-size ~4099 KB "ghost PNG" — that was macOS's TIFF
-*preview* being grabbed instead of the file). Root cause: the macOS clipboard
-backend's `read_file_paths()` returns `[]`, so capture falls through to the text
-branch.
+## THE CURRENT BUG (top priority) — ✅ RESOLVED & VERIFIED (macOS 26.5.1, 2026-06-07)
+Was: **copying a file in Finder synced the *filename text*, not the file** (and an
+image file produced a ~4099 KB "ghost PNG" — macOS's TIFF *preview*).
 
-Latest attempt (in `clippy/backends/mac.py`): read **`public.file-url`** off each
-`NSPasteboard.pasteboardItems()` (NSFilenamesPboardType is deprecated/empty on
-modern macOS), then `readObjectsForClasses_options_([NSURL], None)`, then legacy
-fallbacks. **Verify this actually returns the path on this macOS version** — that's
-the crux. There's a debug menu item **"Clipboard types (debug)"** that shows the
-pasteboard types + detected paths: copy a file, click it, read the result.
+**Status: fixed at HEAD and verified end-to-end both directions** with `david-pop-os`
+(27.8 MB MP4 with spaces in the name, JPG, PNG, GIF all sync as real files).
+
+Non-obvious finding for future debugging: on macOS 26,
+`pasteboardItem.stringForType_("public.file-url")` returns an **opaque file-reference
+URL** (`file:///.file/id=…`) that fails `os.path.isfile`, so the file-url string branch
+yields nothing. The load-bearing branch is **`readObjectsForClasses_([NSURL], None)`**
+→ `u.path()`, which resolves the opaque ref to the real path. Keep that branch.
+
+Also fixed here: `MacBackend.list_types()` now reports `text/uri-list` for file copies.
+Real Finder copies always include a preview+filename text (so capture proceeded), but a
+*bare* `public.file-url` copy made `list_types()` empty and `capture_current()` bailed
+at `if not types` before `read_file_paths`. Diagnostic: `scripts/mac_pb_probe.py`
+(copy a file, run it, see pasteboard types + what capture stores). There's also a debug
+menu item **"Clipboard types (debug)"**.
 
 How to test the backend directly (fast, no app):
 ```python
