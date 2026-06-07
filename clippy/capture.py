@@ -19,31 +19,25 @@ def capture_current():
         return None
 
     new_id = None
-    image_mime = clipboard.pick_image_type(types)
-    file_paths = [] if image_mime else clipboard.read_file_paths(types)
-    if image_mime:
-        data = clipboard.read_bytes(image_mime)
-        if data:
-            new_id = storage.add_image(data, image_mime)
-    elif file_paths:
-        # A copied file (image, video, PDF, …): store the bytes, not the path.
+    # Check for a copied FILE first. macOS (and some Linux apps) also place a
+    # rendered preview on the clipboard when you copy an image *file* in the file
+    # manager — so checking image data first would grab that fixed-size preview
+    # instead of the real file. A real file copy wins: we sync the actual bytes
+    # with the original name/extension.
+    file_paths = clipboard.read_file_paths(types)
+    if file_paths:
         import mimetypes
         import os
         src = file_paths[0]
         name = os.path.basename(src) or "file"
         mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
-        try:
-            fsize = os.path.getsize(src)
-        except OSError:
-            fsize = 0
-        # A reasonably-sized image file: store as an image so it pastes as an
-        # image on the other device; everything else (video, PDF, big images)
-        # syncs as a file (streamed from disk).
-        if mime.startswith("image/") and 0 < fsize <= 64 * 1024 * 1024:
-            data = open(src, "rb").read()
-            new_id = storage.add_image(data, mime) if data else None
-        else:
-            new_id = storage.add_file_from_path(src, name, mime)
+        new_id = storage.add_file_from_path(src, name, mime)
+    elif clipboard.pick_image_type(types):
+        # Image DATA copied from an app (e.g. Copy Image), no file involved.
+        image_mime = clipboard.pick_image_type(types)
+        data = clipboard.read_bytes(image_mime)
+        if data:
+            new_id = storage.add_image(data, image_mime)
     else:
         text_mime = clipboard.pick_text_type(types)
         if text_mime:

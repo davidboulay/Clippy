@@ -62,7 +62,8 @@ class Tile(Gtk.EventBox):
         self.add(card)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        badge = Gtk.Label(label="IMAGE" if entry.is_image else "TEXT")
+        badge = Gtk.Label(label="IMAGE" if entry.is_image
+                          else ("FILE" if entry.is_file else "TEXT"))
         badge.get_style_context().add_class("badge")
         badge.get_style_context().add_class(
             "badge-image" if entry.is_image else "badge-text"
@@ -154,8 +155,11 @@ class Tile(Gtk.EventBox):
 
     def _meta_text(self, entry: Entry) -> str:
         when = _relative_time(entry.created_at)
-        if entry.is_image:
-            return f"{when}  ·  {max(1, entry.size // 1024)} KB"
+        if entry.is_image or entry.is_file:
+            sz = entry.size or 0
+            human = (f"{sz / 1024 / 1024:.1f} MB" if sz >= 1024 * 1024
+                     else f"{max(1, sz // 1024)} KB")
+            return f"{when}  ·  {human}"
         text = entry.text or ""
         lines = text.count("\n") + 1
         if lines > 1:
@@ -503,7 +507,9 @@ class Panel:
         mode: 'auto' (respect the always-plain-text setting), 'plain', 'rich'.
         """
         try:
-            if entry.is_image and entry.image_path:
+            if entry.is_file and entry.image_path:
+                clipboard.copy_file(entry.image_path)   # put the real file back
+            elif entry.is_image and entry.image_path:
                 clipboard.copy_image(Path(entry.image_path).read_bytes(),
                                      entry.mime or "image/png")
             else:
