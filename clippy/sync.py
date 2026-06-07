@@ -240,6 +240,10 @@ class SyncEngine:
             self._peers_online.pop(pid, None)
         else:
             self._peers_online[pid] = (ip, info.port, props.get("name", pid))
+            # Keep a paired peer's last-known address fresh for the mDNS-free path.
+            if pid in self.trusted and self.trusted[pid].get("addr") != ip:
+                self.trusted[pid]["addr"] = ip
+                self._save_peers()
         if self._on_status:
             self._on_status()
 
@@ -334,9 +338,12 @@ class SyncEngine:
         payload = json.dumps(env).encode("utf-8")
         for pid, peer in list(self.trusted.items()):
             online = self._peers_online.get(pid)
-            if not online:
+            if online:
+                ip, port = online[0], online[1]
+            elif peer.get("addr"):
+                ip, port = peer["addr"], config.SYNC_PORT   # mDNS-free fallback
+            else:
                 continue
-            ip, port = online[0], online[1]
             threading.Thread(
                 target=self._send_to, args=(ip, port, peer, payload), daemon=True
             ).start()
@@ -400,19 +407,30 @@ class SyncEngine:
         if not hmac.compare_digest(reply.get("confirm", ""), confirm):
             _send_frame(conn, {"type": "pair_err", "reason": "code mismatch"})
             return
-        self.trusted[id_b] = {"name": name_b, "pubkey": pk_b}
+        try:
+            peer_ip = conn.getpeername()[0]
+        except OSError:
+            peer_ip = None
+        # Remember the peer's address so we can sync to it even if mDNS never
+        # discovers it (multicast-blocked networks / multi-homed hosts).
+        self.trusted[id_b] = {"name": name_b, "pubkey": pk_b, "addr": peer_ip}
         self._save_peers()
         self._pairing = None
         _send_frame(conn, {"type": "paired", "name": self.device_name()})
         if self._on_status:
             self._on_status()
 
-    def join_pairing(self, code: str) -> dict:
-        """Enter-a-code mode (device B). Tries discovered peers; returns result."""
+    def join_pairing(self, code: str, host: Optional[str] = None) -> dict:
+        """Enter-a-code mode (device B). With ``host`` set, connect straight to
+        that IP (no mDNS needed); otherwise try the mDNS-discovered peers."""
         code = code.strip()
+        if host:
+            return self._pair_client(host, config.SYNC_PORT, code)
         peers = list(self._peers_online.items())
         if not peers:
-            return {"ok": False, "error": "no devices found on the LAN yet"}
+            return {"ok": False,
+                    "error": "no devices found on the LAN (mDNS may be blocked — "
+                             "retry with the other device's IP: clippy pair CODE IP)"}
         for pid, (ip, port, name) in peers:
             res = self._pair_client(ip, port, code)
             if res.get("ok"):
@@ -436,7 +454,8 @@ class SyncEngine:
                 done = _recv_frame(s)
                 if not done or done.get("type") != "paired":
                     return {"ok": False, "error": "peer rejected"}
-                self.trusted[ack["id"]] = {"name": ack.get("name", ack["id"]), "pubkey": pk_a}
+                self.trusted[ack["id"]] = {"name": ack.get("name", ack["id"]),
+                                           "pubkey": pk_a, "addr": ip}
                 self._save_peers()
                 if self._on_status:
                     self._on_status()

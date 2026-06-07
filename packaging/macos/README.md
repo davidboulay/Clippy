@@ -33,6 +33,11 @@ Pair with a Linux machine running Clippy ≥ 1.2.0 (Settings → Sync, or
 
 ## Notes / limitations
 
+- **Firewall**: if the macOS Application Firewall is on, allow Clippy to accept
+  **incoming connections** (System Settings → Network → Firewall → Options →
+  Clippy → Allow), or pairing/sync will silently fail. Unsigned apps don't
+  always get a clean "allow?" prompt — the app shows a one-time reminder, and
+  code-signing makes the prompt appear naturally.
 - **Unsigned** builds only run for the user who built them. To share the app,
   code-sign + notarize with an Apple Developer ID (`codesign` + `notarytool`).
 - macOS has no background clipboard push, so capture is a ~0.4 s `changeCount`

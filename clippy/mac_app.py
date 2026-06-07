@@ -36,6 +36,20 @@ def run() -> int:
     engine = sync.SyncEngine()
     engine.start()
 
+    # Unsigned apps don't always get a clean macOS firewall prompt, and a blocked
+    # incoming port silently breaks pairing. Nudge the user once.
+    if not settings.get("mac_firewall_hint_shown"):
+        try:
+            rumps.alert(
+                title="Allow Clippy through the firewall",
+                message="If macOS asks, click “Allow” so devices can reach Clippy.\n\n"
+                        "If pairing ever fails, check:\n"
+                        "System Settings → Network → Firewall → Options →\n"
+                        "make sure Clippy is set to allow incoming connections.",
+            )
+        finally:
+            settings.set_value("mac_firewall_hint_shown", True)
+
     def on_change():
         try:
             if capture_current():

@@ -27,6 +27,8 @@ DEFAULTS: Dict[str, Any] = {
     # LAN clipboard sync.
     "sync_enabled": False,
     "device_name": "",   # empty => fall back to the hostname
+    # macOS: show the "allow incoming connections" firewall hint once.
+    "mac_firewall_hint_shown": False,
 }
 
 

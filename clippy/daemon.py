@@ -178,7 +178,10 @@ def _sync_query(engine):
             return json.dumps(engine.status())
         if cmd == "pair":
             if arg:
-                return json.dumps(engine.join_pairing(arg))
+                parts = arg.split()
+                code = parts[0]
+                host = parts[1] if len(parts) > 1 else None
+                return json.dumps(engine.join_pairing(code, host))
             return json.dumps({"code": engine.enter_pairing()})
         return "err"
 
