@@ -22,6 +22,12 @@ OPTIONS = {
     #  - zeroconf + ifaddr (+ async_timeout): mDNS discovery
     "packages": ["clippy", "nacl", "cffi", "zeroconf", "ifaddr", "rumps"],
     "includes": ["_cffi_backend", "async_timeout", "AppKit", "Foundation", "objc"],
+    # Copy the menubar template icons into Contents/Resources (packages alone
+    # doesn't reliably bundle package data files).
+    "resources": [
+        os.path.join(REPO, "clippy", "icons", "clippy-menubar.png"),
+        os.path.join(REPO, "clippy", "icons", "clippy-menubar@2x.png"),
+    ],
     "plist": {
         "CFBundleName": "Clippy",
         "CFBundleDisplayName": "Clippy",

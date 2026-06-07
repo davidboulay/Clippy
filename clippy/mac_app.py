@@ -49,6 +49,22 @@ def set_login_item(enabled: bool) -> None:
     os.system(f"launchctl load {shlex.quote(_LOGIN_PLIST)} 2>/dev/null")
 
 
+def _menubar_icon_path():
+    """Resolve the template icon — package dir, else the bundle's Resources."""
+    if config.MAC_MENUBAR_ICON.exists():
+        return str(config.MAC_MENUBAR_ICON)
+    try:
+        from Foundation import NSBundle
+        rp = NSBundle.mainBundle().resourcePath()
+        if rp:
+            p = os.path.join(str(rp), "clippy-menubar.png")
+            if os.path.exists(p):
+                return p
+    except Exception:
+        pass
+    return None
+
+
 def _install_wake_observer(engine):
     """Restart discovery/sockets when the Mac wakes (mDNS + TCP go stale)."""
     try:
@@ -88,13 +104,29 @@ def run() -> int:
 
     class ClippyApp(rumps.App):
         def __init__(self):
-            icon = str(config.MAC_MENUBAR_ICON) if config.MAC_MENUBAR_ICON.exists() else None
+            icon = _menubar_icon_path()
             super().__init__("Clippy", title=None, icon=icon, template=True,
                              quit_button="Quit Clippy")
-            self.menu = ["Settings…", None, "Show pairing code", "Enter code…"]
+            self.menu = ["Sync status", None, "Settings…", None,
+                         "Show pairing code", "Enter code…"]
+            self.menu["Sync status"].set_callback(None)   # info line, not clickable
             self._settings = None
             self._prog = None
             rumps.Timer(self._tick_progress, 0.4).start()
+            rumps.Timer(self._tick_status, 5).start()
+            self._tick_status(None)
+
+        def _tick_status(self, _timer):
+            try:
+                peers = engine.status().get("peers", [])
+            except Exception:
+                peers = []
+            online = [p for p in peers if p["online"]]
+            if not peers:
+                txt = "Not paired with any device"
+            else:
+                txt = f"Paired: {len(peers)} ({len(online)} online)"
+            self.menu["Sync status"].title = txt
 
         @rumps.clicked("Settings…")
         def open_settings(self, _):

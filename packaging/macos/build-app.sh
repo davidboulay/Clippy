@@ -28,11 +28,40 @@ pip install --quiet pynacl zeroconf rumps pyobjc-framework-Cocoa py2app
 
 rm -rf build dist/Clippy.app
 python packaging/macos/setup_py2app.py py2app
+APP="dist/Clippy.app"
 
-echo "==> Built dist/Clippy.app"
-echo "    Drag it to /Applications. First launch: right-click → Open"
-echo "    (unsigned build), then allow it under System Settings → Privacy."
-echo "    To start at login: System Settings → General → Login Items → +."
+# --- code signing -----------------------------------------------------------
+# Default: ad-hoc sign ("-") — gives the app a STABLE local identity (so the
+# firewall/permission grants persist across rebuilds), but Gatekeeper still
+# shows "unidentified developer".
+# To remove that label, sign with an Apple Developer ID and notarize:
+#   export CLIPPY_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+#   export CLIPPY_NOTARY_PROFILE="clippy-notary"   # a stored notarytool profile
+IDENTITY="${CLIPPY_SIGN_IDENTITY:--}"
+if [[ "$IDENTITY" == "-" ]]; then
+    echo "==> Ad-hoc signing (no Developer ID set)…"
+    codesign --force --deep --sign - "$APP"
+else
+    echo "==> Signing with: $IDENTITY"
+    codesign --force --deep --options runtime --timestamp \
+             --sign "$IDENTITY" "$APP"
+    if [[ -n "${CLIPPY_NOTARY_PROFILE:-}" ]]; then
+        echo "==> Notarizing (this uploads to Apple and waits)…"
+        ZIP="dist/Clippy-notarize.zip"
+        ditto -c -k --keepParent "$APP" "$ZIP"
+        xcrun notarytool submit "$ZIP" --keychain-profile "$CLIPPY_NOTARY_PROFILE" --wait
+        xcrun stapler staple "$APP"
+        rm -f "$ZIP"
+        echo "==> Notarized + stapled."
+    fi
+fi
+
+echo "==> Built $APP"
+if [[ "$IDENTITY" == "-" ]]; then
+    echo "    Unsigned/ad-hoc: first launch right-click → Open (one time),"
+    echo "    or: xattr -dr com.apple.quarantine '$APP'  (if it was downloaded)."
+fi
+echo "    Drag it to /Applications. Start at login is in Clippy → Settings."
 
 if [[ "${1:-}" == "--dmg" ]]; then
     DMG="dist/Clippy-${VERSION}.dmg"

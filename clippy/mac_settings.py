@@ -119,7 +119,7 @@ class SettingsController(NSObject):
                                   self, b"toggleLogin:")
         view.addSubview_(self.login_cb)
 
-        self._refresh_peers()
+        self.refreshPeers()
 
     def show(self):
         self.window.makeKeyAndOrderFront_(None)
@@ -128,14 +128,14 @@ class SettingsController(NSObject):
         except Exception:
             pass
 
-    # -- main-thread helpers --------------------------------------------
-    def _set_update_status_(self, text):
+    # -- main-thread helpers (camelCase: PyObjC turns underscores into colons) --
+    def setUpdateStatus_(self, text):
         self.update_status.setStringValue_(text)
 
-    def _set_pair_status_(self, text):
+    def setPairStatus_(self, text):
         self.pair_status.setStringValue_(text)
 
-    def _refresh_peers(self):
+    def refreshPeers(self):
         try:
             peers = self.engine.status().get("peers", []) if self.engine else []
         except Exception:
@@ -159,7 +159,7 @@ class SettingsController(NSObject):
             except Exception:
                 msg = "Couldn't check (offline?)"
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                b"_set_update_status_:", msg, False)
+                b"setUpdateStatus:", msg, False)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -186,9 +186,9 @@ class SettingsController(NSObject):
             msg = (f"Paired with {res.get('name', 'device')}." if res.get("ok")
                    else f"Pairing failed: {res.get('error', 'unknown')}")
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                b"_set_pair_status_:", msg, False)
+                b"setPairStatus:", msg, False)
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                b"_refresh_peers", None, False)
+                b"refreshPeers", None, False)
 
         threading.Thread(target=work, daemon=True).start()
 
