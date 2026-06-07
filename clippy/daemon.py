@@ -54,7 +54,8 @@ def _start_watcher() -> Optional[subprocess.Popen]:
 class AppController:
     """Owns the GTK objects and routes IPC commands to them."""
 
-    def __init__(self):
+    def __init__(self, engine=None):
+        self.sync = engine  # SyncEngine or None; used by the settings Sync UI
         from gi.repository import Gdk, Gtk
 
         self._gtk = Gtk
@@ -148,6 +149,78 @@ class AppController:
         return False
 
 
+def _make_engine():
+    """Create + start the sync engine if available and enabled, else None."""
+    from . import sync
+    if not sync.sync_available() or not settings.get("sync_enabled"):
+        return None
+    try:
+        engine = sync.SyncEngine()
+        engine.start()
+        print("clippy: clipboard sync enabled.")
+        return engine
+    except Exception as exc:
+        print(f"clippy: sync disabled ({exc})", file=sys.stderr)
+        return None
+
+
+def _sync_query(engine):
+    """IPC query handler for sync commands (runs on the IPC server thread)."""
+    import json
+
+    def query(cmd, arg):
+        if engine is None:
+            return "err sync is disabled"
+        if cmd == "_broadcast":
+            engine.broadcast_latest()
+            return "ok"
+        if cmd in ("peers", "sync-status"):
+            return json.dumps(engine.status())
+        if cmd == "pair":
+            if arg:
+                return json.dumps(engine.join_pairing(arg))
+            return json.dumps({"code": engine.enter_pairing()})
+        return "err"
+
+    return query
+
+
+def _run_headless(engine) -> int:
+    """macOS path: no GTK. Poll the pasteboard, capture, broadcast; serve IPC."""
+    import signal
+    import threading
+    from . import clipboard
+    from .capture import capture_current
+
+    server = ipc.Server(handler=lambda cmd: None, query=_sync_query(engine))
+    server.start()
+
+    def on_change():
+        try:
+            if capture_current() and engine is not None:
+                engine.broadcast_latest()
+        except Exception:
+            pass
+
+    capture_current()           # snapshot whatever's already there
+    clipboard.start_watch(on_change)
+    print("clippy: daemon started (headless).")
+
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, lambda *_: stop.set())
+        except ValueError:
+            pass
+    try:
+        stop.wait()
+    finally:
+        server.stop()
+        if engine is not None:
+            engine.stop()
+    return 0
+
+
 def run_daemon() -> int:
     try:
         clipboard.require_tools()
@@ -160,6 +233,11 @@ def run_daemon() -> int:
         print("clippy: daemon already running.")
         return 0
 
+    engine = _make_engine()
+
+    if sys.platform == "darwin":
+        return _run_headless(engine)
+
     _install_icon()
     sound.ensure()
 
@@ -167,10 +245,11 @@ def run_daemon() -> int:
     gi.require_version("Gtk", "3.0")
     from gi.repository import GLib, Gtk  # noqa: E402
 
-    controller = AppController()
+    controller = AppController(engine)
 
     server = ipc.Server(
-        handler=lambda cmd: GLib.idle_add(controller.handle_command, cmd)
+        handler=lambda cmd: GLib.idle_add(controller.handle_command, cmd),
+        query=_sync_query(engine),
     )
     server.start()
 
@@ -201,6 +280,8 @@ def run_daemon() -> int:
         pass
     finally:
         server.stop()
+        if engine is not None:
+            engine.stop()
         if watcher is not None:
             watcher.terminate()
             try:

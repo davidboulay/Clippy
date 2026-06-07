@@ -1,9 +1,11 @@
 """Tiny line-based IPC over a Unix domain socket.
 
-The daemon listens; short-lived CLI invocations (``toggle``, and the
-``_store`` hook) connect and send a single command. This is how a COSMIC
-custom keyboard shortcut talks to the already-running panel without needing
-any global-hotkey grab (which Wayland forbids for ordinary apps).
+The daemon listens; short-lived CLI invocations (``toggle``, the ``_store``
+hook, ``pair``/``peers``) connect and send a single command, optionally with an
+argument (``command arg``). Most commands are UI actions dispatched onto the GTK
+main thread (fire-and-forget). A few are *queries* (``peers``, ``sync-status``,
+``pair``, ``_broadcast``) handled synchronously by a separate callback so the
+caller gets data back.
 """
 from __future__ import annotations
 
@@ -14,17 +16,22 @@ from typing import Callable, Optional
 
 from . import config
 
+# UI commands: acknowledged with "ok", dispatched async to the GTK thread.
 VALID_COMMANDS = {
     "toggle", "show", "hide", "refresh", "ping", "quit",
     "open-settings", "reload-settings",
 }
+# Query commands: handled synchronously; the reply carries data.
+QUERY_COMMANDS = {"peers", "sync-status", "pair", "_broadcast"}
+
+_MAX_REPLY = 1 << 16
 
 
 def _socket_path() -> str:
     return str(config.SOCKET_PATH)
 
 
-def send(command: str, timeout: float = 1.0) -> Optional[str]:
+def send(command: str, timeout: float = 5.0) -> Optional[str]:
     """Send a command to a running daemon. Returns the reply, or None if no
     daemon is listening."""
     path = _socket_path()
@@ -33,7 +40,15 @@ def send(command: str, timeout: float = 1.0) -> Optional[str]:
             sock.settimeout(timeout)
             sock.connect(path)
             sock.sendall((command.strip() + "\n").encode("utf-8"))
-            return sock.recv(64).decode("utf-8", "replace").strip()
+            chunks = []
+            while True:
+                buf = sock.recv(4096)
+                if not buf:
+                    break
+                chunks.append(buf)
+                if sum(len(c) for c in chunks) >= _MAX_REPLY:
+                    break
+            return b"".join(chunks).decode("utf-8", "replace").strip()
     except (OSError, socket.timeout):
         return None
 
@@ -43,12 +58,16 @@ def daemon_running() -> bool:
 
 
 class Server:
-    """Accepts connections on a background thread and dispatches commands via
-    a callback. The callback is invoked off the GTK main thread, so it should
-    marshal UI work with GLib.idle_add."""
+    """Accepts connections on a background thread.
 
-    def __init__(self, handler: Callable[[str], None]):
+    ``handler(command)`` runs UI commands (the daemon marshals to GLib).
+    ``query(command, arg) -> str|None`` runs data commands synchronously on the
+    server thread (the sync engine is thread-safe)."""
+
+    def __init__(self, handler: Callable[[str], None],
+                 query: Optional[Callable[[str, str], Optional[str]]] = None):
         self._handler = handler
+        self._query = query
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -56,7 +75,6 @@ class Server:
     def start(self) -> None:
         config.ensure_dirs()
         path = _socket_path()
-        # Clear a stale socket left by an unclean shutdown.
         if os.path.exists(path):
             try:
                 os.unlink(path)
@@ -79,15 +97,22 @@ class Server:
                 break
             with conn:
                 try:
-                    data = conn.recv(64).decode("utf-8", "replace").strip()
+                    conn.settimeout(30)
+                    data = conn.recv(4096).decode("utf-8", "replace").strip()
                 except OSError:
                     continue
-                if data == "ping":
+                cmd, _, arg = data.partition(" ")
+                if cmd == "ping":
                     self._reply(conn, "pong")
-                    continue
-                if data in VALID_COMMANDS:
+                elif cmd in QUERY_COMMANDS and self._query is not None:
+                    try:
+                        reply = self._query(cmd, arg.strip())
+                    except Exception as exc:
+                        reply = f"err {exc}"
+                    self._reply(conn, reply if reply is not None else "ok")
+                elif cmd in VALID_COMMANDS:
                     self._reply(conn, "ok")
-                    self._handler(data)
+                    self._handler(cmd)
                 else:
                     self._reply(conn, "err")
 

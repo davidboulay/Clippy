@@ -24,6 +24,13 @@ DB_PATH = DATA_DIR / "history.db"
 IMAGE_DIR = DATA_DIR / "images"
 SOCKET_PATH = RUNTIME_DIR / "clippy.sock"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
+
+# --- LAN clipboard sync (see clippy/sync.py) ---
+SYNC_PORT = 47823                       # TCP port peers connect to
+SYNC_SERVICE = "_clippy._tcp.local."    # mDNS service type
+KEY_PATH = DATA_DIR / "identity.key"    # long-term X25519 private key (0600)
+PEERS_PATH = DATA_DIR / "peers.json"    # trusted paired peers (0600)
+DEVICE_ID_PATH = DATA_DIR / "device-id" # stable per-device UUID
 SOUND_PATH = DATA_DIR / "copy.wav"
 # Icon copied into a private theme dir so the tray can reference it by name.
 ICON_THEME_DIR = DATA_DIR / "icons"

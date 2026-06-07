@@ -13,6 +13,7 @@ import threading
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")  # else an unversioned Gdk import can grab GTK4
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 from . import config, settings, setup, sound, storage, updates
@@ -89,6 +90,102 @@ class SettingsWindow:
         row.pack_end(sw, False, False, 0)
         box.pack_start(row, False, False, 0)
         return sw
+
+    # -- sync section -----------------------------------------------------
+    def _build_sync_section(self, body, prefs):
+        from . import sync as sync_mod
+        self._section(body, "Sync")
+        self._switch_row(
+            body, "Sync clipboard over LAN",
+            "Encrypted sync with paired devices on your network. "
+            "Restart Clippy after changing this.",
+            bool(prefs.get("sync_enabled")), self._on_sync_enabled,
+        )
+
+        def note(text):
+            lbl = Gtk.Label(label=text)
+            lbl.set_xalign(0.0)
+            lbl.set_line_wrap(True)
+            lbl.get_style_context().add_class("settings-desc")
+            body.pack_start(lbl, False, False, 0)
+            return lbl
+
+        if not sync_mod.sync_available():
+            note("Install python3-nacl and python3-zeroconf to enable sync.")
+            return
+        engine = getattr(self._controller, "sync", None)
+        if engine is None:
+            note("Enable sync above, then restart Clippy to pair devices.")
+            return
+
+        st = engine.status()
+        note(f"This device: {st['device']}  ·  {st['fingerprint']}")
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        show_btn = Gtk.Button(label="Show pairing code")
+        show_btn.connect("clicked", self._on_show_code)
+        btn_row.pack_start(show_btn, False, False, 0)
+        self._sync_entry = Gtk.Entry()
+        self._sync_entry.set_placeholder_text("Enter code from other device")
+        self._sync_entry.set_max_length(6)
+        self._sync_entry.set_width_chars(8)
+        btn_row.pack_start(self._sync_entry, True, True, 0)
+        pair_btn = Gtk.Button(label="Pair")
+        pair_btn.connect("clicked", self._on_pair_clicked)
+        btn_row.pack_start(pair_btn, False, False, 0)
+        body.pack_start(btn_row, False, False, 0)
+
+        self._sync_status_lbl = note("")
+        self._sync_peers_lbl = note("")
+        self._refresh_peers()
+
+    def _on_sync_enabled(self, active):
+        settings.set_value("sync_enabled", active)
+        if hasattr(self, "_sync_status_lbl"):
+            self._sync_status_lbl.set_text("Restart Clippy to apply.")
+
+    def _on_show_code(self, _btn):
+        engine = getattr(self._controller, "sync", None)
+        if engine is None:
+            return
+        code = engine.enter_pairing()
+        self._sync_status_lbl.set_markup(
+            f"Pairing code: <b>{code}</b> — enter it on the other device "
+            "within 2 minutes.")
+
+    def _on_pair_clicked(self, _btn):
+        engine = getattr(self._controller, "sync", None)
+        code = self._sync_entry.get_text().strip()
+        if engine is None or not code:
+            return
+        self._sync_status_lbl.set_text("Pairing…")
+
+        def work():
+            res = engine.join_pairing(code)
+            GLib.idle_add(self._pair_done, res)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _pair_done(self, res):
+        if res.get("ok"):
+            self._sync_status_lbl.set_text(f"Paired with {res.get('name', 'device')}.")
+            self._sync_entry.set_text("")
+        else:
+            self._sync_status_lbl.set_text(f"Pairing failed: {res.get('error', 'unknown')}")
+        self._refresh_peers()
+        return False
+
+    def _refresh_peers(self):
+        engine = getattr(self._controller, "sync", None)
+        if engine is None or not hasattr(self, "_sync_peers_lbl"):
+            return
+        peers = engine.status().get("peers", [])
+        if not peers:
+            self._sync_peers_lbl.set_text("No paired devices yet.")
+        else:
+            self._sync_peers_lbl.set_text(
+                "Paired: " + ", ".join(
+                    f"{'●' if p['online'] else '○'} {p['name']}" for p in peers))
 
     def _build(self):
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -207,6 +304,8 @@ class SettingsWindow:
         self._sc_btn.connect("clicked", self._on_capture_start)
         sc_row.pack_end(self._sc_btn, False, False, 0)
         body.pack_start(sc_row, False, False, 0)
+
+        self._build_sync_section(body, prefs)
 
         self._section(body, "About")
         about_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)

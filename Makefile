@@ -1,5 +1,5 @@
 # Clippy packaging targets.
-.PHONY: help deb flatpak appimage arch clean
+.PHONY: help deb flatpak appimage arch mac-app clean
 
 help:
 	@echo "Targets:"
@@ -7,7 +7,11 @@ help:
 	@echo "  make flatpak   Build & install the Flatpak            (needs network)"
 	@echo "  make appimage  Build dist/Clippy-<ver>-<arch>.AppImage (experimental)"
 	@echo "  make arch      Build an Arch package (runs makepkg)"
+	@echo "  make mac-app   Build dist/Clippy.app                  (run ON a Mac)"
 	@echo "  make clean     Remove build artifacts"
+
+mac-app:
+	./packaging/macos/build-app.sh
 
 deb:
 	./packaging/deb/build-deb.sh
