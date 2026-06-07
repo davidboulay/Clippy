@@ -20,3 +20,7 @@ packaging/flatpak/.flatpak-builder/
 # Scratch / screenshots
 Pasted Image.png
 *.tmp
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store

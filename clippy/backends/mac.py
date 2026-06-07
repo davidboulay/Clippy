@@ -22,6 +22,8 @@ _TEXT = "public.utf8-plain-text"
 _HTML = "public.html"
 _PNG = "public.png"
 _TIFF = "public.tiff"
+_FILE_URL = "public.file-url"
+_FILENAMES = "NSFilenamesPboardType"
 
 
 class MacBackend:
@@ -47,6 +49,12 @@ class MacBackend:
     def list_types(self) -> List[str]:
         types = list(self._pb.types() or [])
         out: List[str] = []
+        # A copied file (Finder Cmd+C). Surface it first — Finder usually also
+        # drops a TIFF preview + filename text, but a bare file-url copy (some
+        # apps) would otherwise leave this list empty and make capture_current()
+        # bail at `if not types` before read_file_paths is ever consulted.
+        if _FILE_URL in types or _FILENAMES in types:
+            out.append("text/uri-list")
         if _PNG in types or _TIFF in types:
             out.append("image/png")
         if _TEXT in types or self._pb.stringForType_(_TEXT):
@@ -114,7 +122,7 @@ class MacBackend:
         try:
             for it in (self._pb.pasteboardItems() or []):
                 try:
-                    s = it.stringForType_("public.file-url")
+                    s = it.stringForType_(_FILE_URL)
                 except Exception:
                     s = None
                 p = _from_url_str(s) if s else None
@@ -139,14 +147,14 @@ class MacBackend:
             return out
         # 3) Single public.file-url on the pasteboard, then legacy filenames.
         try:
-            p = _from_url_str(self._pb.stringForType_("public.file-url"))
+            p = _from_url_str(self._pb.stringForType_(_FILE_URL))
             if p:
                 out.append(p)
         except Exception:
             pass
         if not out:
             try:
-                for p in (self._pb.propertyListForType_("NSFilenamesPboardType") or []):
+                for p in (self._pb.propertyListForType_(_FILENAMES) or []):
                     if os.path.isfile(str(p)):
                         out.append(str(p))
             except Exception:
