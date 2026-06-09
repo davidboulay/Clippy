@@ -146,13 +146,27 @@ def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
         return cur.lastrowid
 
 
+def _blob_ext(name: str, mime: str) -> str:
+    """Pick a file extension for a content-addressed blob: prefer the original
+    name's extension, else derive one from the MIME type. The blob is named
+    ``<sha256><ext>`` so that when the file is later put back on the clipboard
+    (its path's basename), it carries the right extension and apps recognize the
+    type — even when the source had no usable filename (e.g. a copied screenshot)."""
+    import mimetypes
+    import os
+    ext = os.path.splitext(name or "")[1]
+    if not ext and mime:
+        ext = mimetypes.guess_extension(mime.split(";")[0].strip()) or ""
+    return ext
+
+
 def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> Optional[int]:
     """Store an arbitrary file entry. Bytes written to FILE_DIR, original name kept."""
     if not data or len(data) > config.SYNC_MAX_CEILING:
         return None
     digest = hashlib.sha256(data).hexdigest()
     now = time.time()
-    path = config.FILE_DIR / digest        # content-addressed blob
+    path = config.FILE_DIR / (digest + _blob_ext(name, mime))   # content-addressed blob
     with _connect() as conn:
         existing = conn.execute(
             "SELECT id FROM entries WHERE hash=?", (digest,)
@@ -190,7 +204,7 @@ def add_file_from_path(src: str, name: str,
             h.update(chunk)
     digest = h.hexdigest()
     now = time.time()
-    path = config.FILE_DIR / digest
+    path = config.FILE_DIR / (digest + _blob_ext(name, mime))
     with _connect() as conn:
         existing = conn.execute(
             "SELECT id FROM entries WHERE hash=?", (digest,)

@@ -109,6 +109,19 @@ def _recv_exact(sock: socket.socket, n: int) -> Optional[bytes]:
     return buf
 
 
+def _name_with_ext(name: str, mime: str) -> str:
+    """Ensure a filename carries an extension matching its MIME type. Apps and
+    file managers rely on the extension to recognize the type, and content
+    copied as data (e.g. a screenshot) often arrives with a name that has none."""
+    import mimetypes
+    import os
+    name = name or "file"
+    if os.path.splitext(name)[1]:
+        return name
+    ext = mimetypes.guess_extension((mime or "").split(";")[0].strip()) or ""
+    return name + ext
+
+
 def _local_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -420,7 +433,7 @@ class SyncEngine:
         from . import clipboard
         kind = manifest.get("kind")
         mime = manifest.get("mime") or "application/octet-stream"
-        name = os.path.basename(manifest.get("name") or "file") or "file"
+        name = _name_with_ext(os.path.basename(manifest.get("name") or "file") or "file", mime)
         try:
             if kind == "image":
                 data = open(tmp, "rb").read()
@@ -520,10 +533,10 @@ class SyncEngine:
         if not targets:
             return  # nothing paired/online -> no transfer, no progress bar
         self._seen_add(h)
+        mime = getattr(entry, "mime", None) or "application/octet-stream"
+        name = _name_with_ext(getattr(entry, "filename", None) or os.path.basename(blob), mime)
         manifest = {"v": PROTO, "origin": self.device_id, "hash": h, "kind": kind,
-                    "mime": getattr(entry, "mime", None) or "application/octet-stream",
-                    "name": getattr(entry, "filename", None) or os.path.basename(blob),
-                    "size": size}
+                    "mime": mime, "name": name, "size": size}
         for peer, ip, port in targets:
             threading.Thread(target=self._send_media_to,
                              args=(ip, port, peer, blob, manifest), daemon=True).start()
