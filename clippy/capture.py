@@ -43,6 +43,11 @@ def capture_current():
         if text_mime:
             arg = text_mime if "/" in text_mime else None
             text = clipboard.read_text(arg)
+            if not (text and text.strip()) and arg is not None:
+                # The advertised type may be one the app can't actually serve
+                # (e.g. a case-variant MIME like ';charset=UTF-8'); let wl-paste
+                # pick a servable type instead of dropping the copy entirely.
+                text = clipboard.read_text(None)
             if text and text.strip():
                 # Capture the rich version too, so "paste with formatting" works.
                 html = None

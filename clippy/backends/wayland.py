@@ -36,7 +36,14 @@ class WaylandBackend:
 
     @staticmethod
     def _pick(available: List[str], preferred) -> Optional[str]:
-        avail = {t.lower(): t for t in available}
+        # First occurrence wins: some apps (e.g. Bitwarden) advertise the same
+        # type in two cases — 'text/plain;charset=utf-8' AND ';charset=UTF-8' —
+        # but wl-paste only serves the exact string it actually offered. Letting
+        # a later case-variant clobber the earlier one made us request a phantom
+        # type that reads back empty. setdefault keeps the first (servable) one.
+        avail: dict = {}
+        for t in available:
+            avail.setdefault(t.lower(), t)
         for want in preferred:
             if want.lower() in avail:
                 return avail[want.lower()]
