@@ -110,7 +110,7 @@ Download the latest `clippy_*.deb` from the
 **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**, then:
 
 ```bash
-sudo apt install ./clippy_1.3.0_all.deb
+sudo apt install ./clippy_1.3.1_all.deb
 ```
 
 …or fetch it from the terminal with the GitHub CLI:
