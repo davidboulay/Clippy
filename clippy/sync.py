@@ -133,6 +133,15 @@ def _local_ip() -> str:
         s.close()
 
 
+def _fp_of(pubkey_hex: str) -> str:
+    """Short fingerprint of an X25519 public key (same form as the TXT ``fp``
+    advertised over mDNS and ``SyncEngine.fingerprint``). Empty on bad input."""
+    try:
+        return hashlib.sha256(bytes.fromhex(pubkey_hex)).hexdigest()[:16] if pubkey_hex else ""
+    except ValueError:
+        return ""
+
+
 class SyncEngine:
     def __init__(self, on_status: Optional[Callable[[], None]] = None,
                  port: Optional[int] = None, state_dir=None,
@@ -203,7 +212,65 @@ class SyncEngine:
             pass
 
     def fingerprint(self) -> str:
-        return hashlib.sha256(bytes.fromhex(self.pubkey_hex)).hexdigest()[:16] if self.pubkey_hex else ""
+        return _fp_of(self.pubkey_hex)
+
+    def _adopt_peer_id(self, fp: str, new_id: str) -> Optional[dict]:
+        """Reconcile a trusted peer onto its current ``device_id``.
+
+        A peer's ``device-id`` file can regenerate while its keypair (hence
+        fingerprint) stays the same, so trust must follow the stable key, not
+        the random id. Given an advertised/observed fingerprint and the peer's
+        current device_id, collapse every trusted entry sharing that key into a
+        single entry keyed under ``new_id`` (keeping the freshest name/addr) and
+        drop the stale duplicates. Returns the canonical entry, or ``None`` if
+        no trusted peer matches ``fp`` (a genuine stranger — left untrusted)."""
+        if not fp or not new_id:
+            return None
+        dups = [eid for eid in list(self.trusted)
+                if _fp_of(self.trusted[eid].get("pubkey", "")) == fp]
+        if not dups or dups == [new_id]:
+            return self.trusted.get(new_id)        # already canonical / unknown
+        entry = self.trusted.get(new_id) or dict(self.trusted[dups[0]])
+        for eid in dups:
+            p = self.trusted[eid]
+            if not entry.get("name") and p.get("name"):
+                entry["name"] = p["name"]
+            if not entry.get("addr") and p.get("addr"):
+                entry["addr"] = p["addr"]
+            if eid != new_id:
+                self.trusted.pop(eid, None)
+                self._peers_online.pop(eid, None)
+        self.trusted[new_id] = entry
+        self._save_peers()
+        return entry
+
+    def _open_frame(self, frame: dict):
+        """Decrypt an incoming sync/media frame, healing device_id drift.
+
+        Returns ``(sender_id, peer, cleartext_bytes)`` or ``(None, None, None)``.
+        Tries the named ``from`` peer first, then every other trusted key — NaCl
+        Box authenticates, so only the real sender's key decrypts. On a match
+        under a changed id, migrates the trusted entry (``_adopt_peer_id``) so
+        delivery survives a regenerated ``device-id`` without a re-pair."""
+        sender = frame.get("from")
+        try:
+            cipher = bytes.fromhex(frame.get("box", ""))
+        except (ValueError, TypeError):
+            return None, None, None
+        order = ([sender] if sender in self.trusted else []) + \
+                [e for e in list(self.trusted) if e != sender]
+        for eid in order:
+            peer = self.trusted.get(eid)
+            if not peer or not peer.get("pubkey"):
+                continue
+            try:
+                clear = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"]))).decrypt(cipher)
+            except Exception:
+                continue
+            if sender and eid != sender:
+                peer = self._adopt_peer_id(_fp_of(peer["pubkey"]), sender) or peer
+            return (sender or eid), peer, clear
+        return None, None, None
 
     # -- lifecycle -------------------------------------------------------
     def start(self) -> None:
@@ -307,6 +374,7 @@ class SyncEngine:
         pid = props.get("id")
         if not pid or pid == self.device_id:
             return
+        fp = props.get("fp")
         addrs = info.parsed_addresses() if hasattr(info, "parsed_addresses") else []
         ip = addrs[0] if addrs else None
         if not ip:
@@ -315,6 +383,11 @@ class SyncEngine:
         if state_change is ServiceStateChange.Removed:
             self._peers_online.pop(pid, None)
         else:
+            # Heal device_id drift: if this advertised id isn't (canonically)
+            # trusted but its key-fingerprint matches a trusted peer, re-key the
+            # entry to the current id and drop any stale duplicates.
+            if fp:
+                self._adopt_peer_id(fp, pid)
             self._peers_online[pid] = (ip, info.port, props.get("name", pid))
             # Keep a paired peer's last-known address fresh for the mDNS-free path.
             if pid in self.trusted and self.trusted[pid].get("addr") != ip:
@@ -349,13 +422,10 @@ class SyncEngine:
 
     # -- sync transport --------------------------------------------------
     def _handle_sync(self, frame: dict) -> None:
-        sender = frame.get("from")
-        peer = self.trusted.get(sender)
-        if not peer:
-            return  # not paired -> reject
+        _sender, _peer, clear = self._open_frame(frame)
+        if clear is None:
+            return  # not paired / undecryptable -> reject
         try:
-            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
-            clear = box.decrypt(bytes.fromhex(frame["box"]))
             env = json.loads(clear.decode("utf-8"))
         except Exception:
             return
@@ -387,13 +457,12 @@ class SyncEngine:
 
     # -- media receive (streamed) ----------------------------------------
     def _handle_media(self, conn, frame) -> None:
-        sender = frame.get("from")
-        peer = self.trusted.get(sender)
-        if not peer:
+        _sender, peer, clear = self._open_frame(frame)
+        if clear is None:
             return
         try:
-            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
-            manifest = json.loads(box.decrypt(bytes.fromhex(frame["box"])).decode("utf-8"))
+            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))  # for chunks
+            manifest = json.loads(clear.decode("utf-8"))
         except Exception:
             return
         h = manifest.get("hash")
