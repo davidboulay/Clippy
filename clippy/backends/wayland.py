@@ -99,7 +99,32 @@ class WaylandBackend:
         )
 
     def copy_image(self, data: bytes, mime: str) -> None:
+        # Offer the raw image bytes so chat/editor apps (Slack, WhatsApp, VS Code,
+        # browsers) accept a direct paste — not just file managers. wl-copy serves
+        # native-Wayland apps; the X11 mirror covers XWayland apps, which the
+        # compositor does not reliably hand a data-control image selection.
         subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
+        self._x11_mirror(mime, data)
+
+    @staticmethod
+    def _x11_mirror(mime: str, data: bytes) -> None:
+        """Also place `data` on the X11 (XWayland) clipboard via xclip, served by
+        a detached process so it survives after this call. Best-effort: skipped if
+        there's no X display or xclip isn't installed (native-Wayland paste still
+        works via wl-copy)."""
+        import os
+        if not os.environ.get("DISPLAY") or shutil.which("xclip") is None:
+            return
+        try:
+            p = subprocess.Popen(
+                ["xclip", "-selection", "clipboard", "-t", mime],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            p.stdin.write(data)
+            p.stdin.close()   # xclip drains stdin, then forks to serve the selection
+        except OSError:
+            pass
 
     # -- files ----------------------------------------------------------
     _FILE_TYPES = ("x-special/gnome-copied-files", "text/uri-list")
@@ -130,6 +155,9 @@ class WaylandBackend:
         payload = f"copy\nfile://{uri}".encode("utf-8")
         subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
                        input=payload, timeout=15)
+        # Mirror a uri-list to X11 so XWayland apps that accept a dropped/pasted
+        # file (editors, some chat apps) see it too.
+        self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
 
     def start_watch(self, on_change: Callable[[], None]) -> None:
         # No-op: the daemon spawns `wl-paste --watch ... _store`, which is the
