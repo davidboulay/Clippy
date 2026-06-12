@@ -110,7 +110,7 @@ Download the latest `clippy_*.deb` from the
 **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**, then:
 
 ```bash
-sudo apt install ./clippy_1.3.2_all.deb
+sudo apt install ./clippy_1.3.3_all.deb
 ```
 
 …or fetch it from the terminal with the GitHub CLI:
@@ -150,7 +150,7 @@ Dependencies: `wl-clipboard`, `python3-gi`, `gir1.2-gtk-3.0`,
 `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
 `gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
 plus `python3-nacl` + `python3-zeroconf` for sync (`ffmpeg` optional, for video
-preview thumbnails).
+preview thumbnails; `xclip` optional, to paste images/files into XWayland apps).
 
 ### Set the shortcut
 

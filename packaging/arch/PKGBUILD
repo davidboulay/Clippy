@@ -10,7 +10,8 @@ license=('MIT')
 depends=('python' 'python-gobject' 'gtk3' 'gtk-layer-shell'
          'libayatana-appindicator' 'wl-clipboard')
 optdepends=('pipewire: copy sound effect (pw-play)'
-            'libpulse: copy sound effect (paplay)')
+            'libpulse: copy sound effect (paplay)'
+            'xclip: paste images/files into XWayland apps')
 
 _repo="$startdir/../.."
 
