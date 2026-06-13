@@ -234,8 +234,10 @@ def _write_png(nsimage, path):
 def _warm_ql_cache(blob, ext, key, px):
     """Generate a QuickLook thumbnail for a file and cache it as a PNG (run on a
     background thread). Our blobs are hash-named, so QuickLook can't infer the
-    type — point a correctly-suffixed symlink at the blob so it can. Fire-and-
-    forget: the thumbnail shows the next time the panel opens (cache hit)."""
+    type — give it a correctly-suffixed HARDLINK to the blob (same inode, no
+    data copy; QuickLook won't generate video frames through a *symlink*, but a
+    hardlink reads as a real file). Fire-and-forget: the thumbnail shows the next
+    time the panel opens (cache hit)."""
     cache = _ql_cache_path(key)
     if cache.exists():
         return
@@ -248,22 +250,27 @@ def _warm_ql_cache(blob, ext, key, px):
         from Foundation import NSMakeSize, NSURL
         from QuickLookThumbnailing import (
             QLThumbnailGenerationRequest,
-            QLThumbnailGenerationRequestRepresentationTypeAll,
+            QLThumbnailGenerationRequestRepresentationTypeLowQualityThumbnail,
+            QLThumbnailGenerationRequestRepresentationTypeThumbnail,
             QLThumbnailGenerator,
         )
+        # Request real thumbnails only (NOT icons): with the "all" mask QL returns
+        # the always-available generic icon instead of the content frame. If a file
+        # truly can't be previewed, QL fails and we keep the clean type card.
+        reptypes = (QLThumbnailGenerationRequestRepresentationTypeThumbnail
+                    | QLThumbnailGenerationRequestRepresentationTypeLowQualityThumbnail)
         config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
         src = blob
         if ext:
             link = config.THUMB_DIR / f"ql-{key}{ext}"
             try:
                 if not link.exists():
-                    os.symlink(blob, link)
+                    os.link(blob, link)        # hardlink (no copy; QL needs a real file)
                 src = str(link)
             except OSError:
                 link = None
         req = QLThumbnailGenerationRequest.alloc().initWithFileAtURL_size_scale_representationTypes_(
-            NSURL.fileURLWithPath_(src), NSMakeSize(px, px), 2.0,
-            QLThumbnailGenerationRequestRepresentationTypeAll)
+            NSURL.fileURLWithPath_(src), NSMakeSize(px, px), 2.0, reptypes)
         ev = threading.Event()
         box = {}
 
