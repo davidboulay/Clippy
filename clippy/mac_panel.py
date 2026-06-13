@@ -26,6 +26,7 @@ from AppKit import (
     NSEvent,
     NSEventMaskLeftMouseDown,
     NSEventMaskRightMouseDown,
+    NSEventModifierFlagCommand,
     NSFont,
     NSImage,
     NSImageScaleProportionallyUpOrDown,
@@ -34,6 +35,7 @@ from AppKit import (
     NSPanel,
     NSScreen,
     NSScrollView,
+    NSSearchField,
     NSTextField,
     NSView,
     NSVisualEffectBlendingModeBehindWindow,
@@ -414,6 +416,19 @@ class ClippyPanel(NSPanel):
         else:
             self.orderOut_(None)
 
+    def performKeyEquivalent_(self, event):  # noqa: N802 — ⌘1–9 quick-copy
+        try:
+            if event.modifierFlags() & NSEventModifierFlagCommand:
+                ch = event.charactersIgnoringModifiers()
+                if ch and len(ch) == 1 and ch in "123456789":
+                    d = self.delegate()
+                    if d is not None and d.respondsToSelector_(b"quickSelect:"):
+                        d.quickSelect_(int(ch))
+                        return True
+        except Exception:
+            pass
+        return objc.super(ClippyPanel, self).performKeyEquivalent_(event)
+
 
 # -- controller -----------------------------------------------------------
 class PanelController(NSObject):
@@ -424,8 +439,12 @@ class PanelController(NSObject):
         if self is None:
             return None
         self._panel = None
+        self._search = None
         self._click_monitor = None
         self._prev_app = None      # app to re-activate on hide (so ⌘V targets it)
+        self._query = ""
+        self._tiles = []           # current TileViews, in display order
+        self._sel = -1             # selected index for keyboard nav
         return self
 
     # -- building --------------------------------------------------------
@@ -466,8 +485,20 @@ class PanelController(NSObject):
             pass
         panel.setContentView_(ve)
 
-        # Horizontal scroll of tiles, populated by reload().
-        sframe = NSMakeRect(_PAD, _PAD, 800 - 2 * _PAD, config.PANEL_HEIGHT - 2 * _PAD)
+        full_w = 800.0
+        sh = 28.0
+        sf_y = config.PANEL_HEIGHT - _PAD - sh
+        # Search field at the top (type to filter).
+        search = NSSearchField.alloc().initWithFrame_(
+            NSMakeRect(_PAD, sf_y, full_w - 2 * _PAD, sh))
+        search.setFont_(NSFont.systemFontOfSize_(13))
+        search.setDelegate_(self)
+        search.setAutoresizingMask_(2 | 8)     # width-flexible, pinned to top
+        ve.addSubview_(search)
+
+        # Horizontal scroll of tiles below the search field, populated by reload().
+        scroll_h = sf_y - _PAD - 8
+        sframe = NSMakeRect(_PAD, _PAD, full_w - 2 * _PAD, scroll_h)
         scroll = NSScrollView.alloc().initWithFrame_(sframe)
         scroll.setHasHorizontalScroller_(True)
         scroll.setHasVerticalScroller_(False)
@@ -482,6 +513,7 @@ class PanelController(NSObject):
 
         panel.setDelegate_(self)   # for cancelOperation_ (Esc) routing
         self._panel = panel
+        self._search = search
         self._scroll = scroll
         self._doc = doc
 
@@ -491,15 +523,17 @@ class PanelController(NSObject):
         self._ensure_panel()
         for v in list(self._doc.subviews()):
             v.removeFromSuperview()
+        self._tiles = []
+        self._sel = -1
         vis_h = self._scroll.contentView().bounds().size.height
         vis_w = self._scroll.frame().size.width
         try:
-            entries = storage.list_entries(limit=config.DISPLAY_LIMIT)
+            entries = storage.list_entries(query=self._query, limit=config.DISPLAY_LIMIT)
         except Exception:
             entries = []
         if not entries:
-            msg = _label("No clipboard history yet.", 14,
-                         NSColor.secondaryLabelColor(), _NS_CENTER)
+            empty = "No matches." if self._query else "No clipboard history yet."
+            msg = _label(empty, 14, NSColor.secondaryLabelColor(), _NS_CENTER)
             msg.setFrame_(NSMakeRect(0, vis_h / 2 - 12, vis_w, 24))
             self._doc.setFrameSize_(NSMakeSize(vis_w, vis_h))
             self._doc.addSubview_(msg)
@@ -513,8 +547,11 @@ class PanelController(NSObject):
             tile._controller = self
             tile.setFrame_(NSMakeRect(x, y, config.TILE_WIDTH, th))
             self._doc.addSubview_(tile)
+            self._tiles.append(tile)
             x += config.TILE_WIDTH + _GAP
         self._doc.setFrameSize_(NSMakeSize(max(x, vis_w), vis_h))
+        if self._tiles:
+            self._set_selection(0)
 
     def _position(self):
         """Anchor a full-width strip to the bottom of the screen, floating OVER
@@ -552,6 +589,8 @@ class PanelController(NSObject):
     def show(self):
         self._ensure_panel()
         self._remember_frontmost()
+        self._query = ""
+        self._search.setStringValue_("")
         self._position()
         self.reload()
         # Activate our app so the popUpMenu-level panel draws OVER the Dock
@@ -560,7 +599,56 @@ class PanelController(NSObject):
         self._panel.makeKeyAndOrderFront_(None)
         self._panel.orderFrontRegardless()
         self._panel.makeKeyWindow()
+        self._panel.makeFirstResponder_(self._search)   # type-to-search immediately
         self._add_click_monitor()
+
+    # -- search + keyboard nav -------------------------------------------
+    def controlTextDidChange_(self, _notification):
+        self._query = self._search.stringValue() or ""
+        self.reload()
+
+    def control_textView_doCommandBySelector_(self, _control, _textview, sel):
+        name = sel if isinstance(sel, str) else str(sel)
+        if name == "moveLeft:":
+            self._set_selection(self._sel - 1); return True
+        if name == "moveRight:":
+            self._set_selection(self._sel + 1); return True
+        if name in ("insertNewline:", "insertLineBreak:"):
+            self._copy_selected(); return True
+        if name == "cancelOperation:":
+            self.hide(); return True
+        return False
+
+    def _set_selection(self, idx):
+        if not self._tiles:
+            self._sel = -1
+            return
+        idx = max(0, min(int(idx), len(self._tiles) - 1))
+        self._sel = idx
+        accent = NSColor.controlAccentColor().CGColor()
+        for i, t in enumerate(self._tiles):
+            lay = t.layer()
+            if lay is None:
+                continue
+            if i == idx:
+                lay.setBorderWidth_(2.5)
+                lay.setBorderColor_(accent)
+            else:
+                lay.setBorderWidth_(0.0)
+        try:
+            t = self._tiles[idx]
+            t.scrollRectToVisible_(t.bounds())
+        except Exception:
+            pass
+
+    def _copy_selected(self):
+        if 0 <= self._sel < len(self._tiles):
+            self.selectEntry_(self._tiles[self._sel]._entry_id)
+
+    def quickSelect_(self, n):
+        i = int(n) - 1
+        if 0 <= i < len(self._tiles):
+            self.selectEntry_(self._tiles[i]._entry_id)
 
     def hide(self):
         self._remove_click_monitor()
