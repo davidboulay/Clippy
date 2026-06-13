@@ -1,102 +1,103 @@
 # Clippy
 
-A clipboard-history panel for **Linux and macOS**, inspired by [Paste for macOS](https://pasteapp.io/).
-Press a global shortcut and a strip of tiles slides up from the bottom of the
-screen showing everything you've recently copied — text and images. Click a
-tile (or press <kbd>Enter</kbd>) to load it back onto the clipboard.
+A clipboard-history panel for **Linux and macOS**. Press a global shortcut and a
+strip of tiles slides up from the bottom of the screen showing everything you've
+recently copied — text, images, and files. Click a tile (or press <kbd>Enter</kbd>)
+to load it back onto the clipboard.
 
-Lives in the **system tray** (a paperclip), never in the dock. Built for
-**Wayland** (developed on **Pop!_OS 24.04 + COSMIC**; also works on Sway,
-Hyprland, and other wlroots compositors).
+Clippy stays out of your way — a **paperclip in the menubar / system tray**,
+never in the dock — and adds **end-to-end-encrypted LAN sync** so your clipboard
+follows you between machines, even across operating systems.
 
-There's also a **full macOS app** — the same bottom-screen panel, summoned with
-<kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> — and **encrypted LAN clipboard sync** that
-ties them together: copy on one machine, paste on another, including images and
-files. See [macOS](#macos) and [Cross-device sync](#cross-device-clipboard-sync).
-
-![Clippy's clipboard panel at the bottom of the screen](docs/screenshot.png)
+| Linux (Wayland / COSMIC) | macOS |
+|---|---|
+| ![Clippy on Linux](docs/screenshot.png) | ![Clippy on macOS](docs/screenshot-macos.png) |
 
 ## Features
 
-- **Bottom panel of tiles** for recent clipboard text and images.
-- **Click-away to dismiss** — the panel is a dimmed full-screen overlay; click
-  anywhere outside it (or press <kbd>Esc</kbd>) to close.
-- **Tray icon + Settings** (paperclip in the COSMIC panel). Not shown in the dock.
-- **Follows the COSMIC light/dark theme** automatically.
-- **Settings**:
-  - **Open at login** toggle.
-  - **Sound on copy** — a short synthesized tone when you copy.
-  - **Always paste as plain text** — strip formatting on paste; when off, rich
-    formatting is preserved if the original had it.
-  - **History retention** — keep for *1 day / 1 week / 1 month / 1 year /
-    forever*, with automatic deletion past the threshold.
-  - **Shortcut picker** — press a key combo and Clippy registers it in COSMIC
-    for you (with a backup of your existing shortcuts).
-- **Right-click a tile** → Paste, **Copy as plain text**, Copy with formatting,
-  Pin/Unpin, Delete.
-- **Pin** items so they survive pruning and sort first.
-- **Search** by typing.
-- **Encrypted LAN sync** (opt-in) — share the clipboard across paired devices on
-  your network: text, images, and **any file** (videos, PDFs…), with previews in
-  the panel and a size cap you control. macOS is supported via a menubar app.
+The same panel and history engine run on both platforms:
 
-## Why these technologies?
+- **Bottom panel of tiles** for recent text, images, and files, summoned by a
+  global shortcut and dismissed by clicking away or pressing <kbd>Esc</kbd>.
+- **Previews** — images show inline; files and documents show a type tile, with
+  thumbnails for images, videos, PDFs and docs.
+- **Pin** items so they survive pruning and sort first; **search** by typing;
+  **keyboard navigation** and quick-select.
+- **Plain vs. rich paste** — strip formatting, or keep it when the source had it.
+  Right-click a tile to copy as plain text.
+- **History retention** — keep for *1 day / 1 week / 1 month / 1 year / forever*,
+  with automatic pruning, plus a manual *Clear history*.
+- **Follows the OS light/dark theme** automatically.
+- **Encrypted LAN sync** (opt-in) — share the clipboard across paired devices:
+  text, images, and **any file**, with previews and a size cap you control.
+- **Local-only storage** — SQLite + files under your data dir; nothing leaves
+  your machine unless you pair devices for sync.
 
-macOS lets an app float a window over everything and grab a global hotkey.
-Wayland — by design — does not. Clippy uses the native Wayland mechanisms:
+Each platform adds its native niceties:
 
-| Need | macOS | Clippy (Wayland) |
-|------|-------|------------------|
-| Panel pinned to the screen edge | borderless window | **wlr-layer-shell** (`gtk-layer-shell`) |
-| Watch the clipboard | `NSPasteboard` | **`wl-paste --watch`** (`ext-data-control`) |
-| Global hotkey | `CGEventTap` | a **COSMIC custom shortcut** running `clippy toggle` |
-| Tray icon | `NSStatusItem` | **StatusNotifierItem** via Ayatana **AppIndicator** |
-| Theme | system | reads COSMIC's `is_dark` and matches |
-| UI | AppKit | **GTK 3** (PyGObject) |
-| Storage | — | **SQLite** + image files under `~/.local/share/clippy` |
+- **Linux:** a system-tray paperclip, automatic **COSMIC shortcut binding**, and
+  a full-screen click-away overlay.
+- **macOS:** a menubar paperclip, **Recent / Pinned / custom tabs**, a **type
+  filter**, the **icon of the app each clip came from**, and QuickLook previews.
 
-One binary, several roles:
+## Get Clippy
 
-```
-clippy daemon    # tray + overlay panel + IPC server + clipboard watcher
-clippy toggle    # tiny client → tells the daemon to open/close (your shortcut runs this)
-clippy settings  # open the settings window
-clippy _store    # internal: wl-paste runs this on every clipboard change
+### Linux (Wayland)
+
+Built for **Wayland** — developed on **Pop!_OS 24.04 + COSMIC**, and also works
+on Sway, Hyprland, and other wlroots compositors.
+
+**Ubuntu / Pop!_OS / Debian (recommended)** — download the latest `clippy_*.deb`
+from the **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**:
+
+```bash
+sudo apt install ./clippy_1.4.0_all.deb
 ```
 
-The shortcut → `toggle` → Unix socket → daemon path is what lets a global key
-open the panel without any forbidden hotkey grab.
+…or from the terminal with the GitHub CLI:
 
-## macOS
+```bash
+gh release download --repo davidboulay/clippy --pattern '*.deb'
+sudo apt install ./clippy_*.deb
+```
 
-Clippy on macOS is a **full clipboard-history panel**, not just a sync peer. It
-lives in the **menubar** (a paperclip) and slides the same strip of tiles up
-from the bottom of the screen on <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd>.
+`apt` pulls in the dependencies. Then launch **Clippy** from your app list, open
+**Settings**, and bind a shortcut (see [below](#set-the-linux-shortcut)).
 
-![Clippy's macOS panel over a browser window](docs/screenshot-macos.png)
+**Other distributions**
 
-- **Native AppKit panel** floating over everything (no Accessibility permission
-  needed — the hotkey uses Carbon `RegisterEventHotKey`).
-- **Tiles per type** with a colored header, an SF Symbol, and the **icon of the
-  app you copied from**. Text, Image, Video, Audio, PDF, **CSV/Excel**, Archive,
-  and other files each get their own color.
-- **QuickLook thumbnails** for images, videos, PDFs and documents.
-- **Tabs** — *Recent*, *★ Pinned*, and your own custom tabs (colored, named);
-  pin a clip with ☆ and pick which tab it goes to.
-- **Type filter** next to the search box — show only one kind at a time.
-- **Search**, keyboard nav, <kbd>⌘</kbd>+<kbd>1…9</kbd> quick-select,
-  <kbd>⌘</kbd>+<kbd>P</kbd> pin, <kbd>⌘</kbd>+<kbd>⌫</kbd> delete.
-- **Right-click a text tile → Copy as Plain Text.**
-- **Settings**: copy sound, history retention + *Clear history now*, start at
-  login, updates, and device pairing/unpairing — all in a native window.
-- **Follows macOS light/dark** automatically.
+- **Arch / Manjaro:** `cd packaging/arch && makepkg -si`
+- **AppImage** (experimental, any distro): `make appimage`, then run `dist/Clippy-*.AppImage`
+- **From source:** `git clone … && cd clippy && ./scripts/install.sh` — installs
+  deps, a `~/.local/bin/clippy` launcher + icon, enables autostart, and starts
+  the daemon. Build a `.deb` instead with `make deb` (see
+  [`packaging/README.md`](packaging/README.md)).
+- **Flatpak / COSMIC Store:** ❌ not viable — COSMIC withholds the privileged
+  `layer-shell` and `data-control` Wayland protocols from Flatpak-sandboxed apps,
+  which Clippy requires. Details in [`FLATHUB.md`](FLATHUB.md).
 
-> Note: between two Apple devices on the **same Apple ID**, macOS Universal
-> Clipboard (Continuity) already shares the clipboard. Clippy's sync is what you
-> want across **different Apple IDs** (a work + a personal Mac) or between a Mac
-> and a **Linux** machine.
+Dependencies (handled by the `.deb`): `wl-clipboard`, `python3-gi`,
+`gir1.2-gtk-3.0`, `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
+`gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
+plus `python3-nacl` + `python3-zeroconf` for sync (`ffmpeg` optional for video
+thumbnails; `xclip` optional, to paste images/files into XWayland apps).
 
-**Install:** grab `Clippy-<ver>.dmg` from the
+#### Set the Linux shortcut
+
+Open the tray icon → **Settings** (or the ⚙ in the panel), click the shortcut
+button, and press your combo (e.g. <kbd>Super</kbd>+<kbd>V</kbd>). Clippy writes
+the COSMIC binding for you, keeping a backup of your existing shortcuts. To do it
+from the terminal: `clippy setup-shortcut`.
+
+> Tray not showing? Ensure COSMIC's **Status Area / applet** is on your panel.
+> Either way, the panel's ⚙ opens Settings and the shortcut still works.
+
+### macOS
+
+A native menubar app; the panel opens on <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd>
+(no Accessibility permission needed — the hotkey uses Carbon `RegisterEventHotKey`).
+
+Grab `Clippy-<ver>.dmg` from the
 **[Releases page](https://github.com/davidboulay/clippy/releases/latest)** and
 drag Clippy to *Applications*. Or build it yourself on a Mac:
 
@@ -109,168 +110,147 @@ The build is **ad-hoc signed** (no Apple Developer ID), so the first launch need
 **right-click → Open** once (or `xattr -dr com.apple.quarantine /Applications/Clippy.app`).
 See [`packaging/macos/README.md`](packaging/macos/README.md).
 
+## Using the panel
+
+| Action | Linux | macOS |
+|---|---|---|
+| Open / close the panel | your COSMIC shortcut | <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> |
+| Search history | type | type |
+| Move between tiles | <kbd>←</kbd>/<kbd>→</kbd>/<kbd>↑</kbd>/<kbd>↓</kbd> | <kbd>←</kbd>/<kbd>→</kbd> |
+| Copy selected & close | <kbd>Enter</kbd> | <kbd>Enter</kbd> |
+| Copy the Nth tile | <kbd>Ctrl</kbd>+<kbd>1…9</kbd> | <kbd>⌘</kbd>+<kbd>1…9</kbd> |
+| Pin / unpin selected | <kbd>Ctrl</kbd>+<kbd>P</kbd> | <kbd>⌘</kbd>+<kbd>P</kbd> |
+| Delete selected | <kbd>Delete</kbd> | <kbd>⌘</kbd>+<kbd>⌫</kbd> |
+| Close | <kbd>Esc</kbd> / click away | <kbd>Esc</kbd> / click away |
+| Copy as plain text | right-click tile | right-click tile |
+
+Selecting a tile sets the clipboard — then paste with <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd>
+yourself (Clippy never injects keystrokes).
+
 ## Cross-device clipboard sync
 
-Opt-in, **end-to-end-encrypted** clipboard sync over your LAN — no cloud, no
-account. Copy on one machine, paste on another. Works across **Wayland-Linux and
-macOS** peers.
+### Why it exists, and who it's for
 
-- **What syncs:** text, images, and **any file** (video, PDF, …). Files arrive
-  as the real file (right name + type), images/videos show a preview tile.
-- **Size cap:** default **512 MiB**, raise up to **2 GiB** in *Settings → Sync*
-  (enforced on both ends). Transfers over ~5 MiB show a progress bar on the sender.
+Most clipboard sync is either locked to one ecosystem or routed through a cloud:
+
+- **Apple Universal Clipboard** only works between Apple devices signed in to the
+  **same Apple ID**, over Continuity.
+- **Cloud clipboard managers** copy your clipboard — passwords, tokens, snippets —
+  onto someone else's servers.
+
+Clippy's sync is **local-first and end-to-end encrypted**: devices talk directly
+to each other on your own network, with no cloud and no account. It's built for
+the setups Universal Clipboard can't cover:
+
+- A **Linux machine and a Mac** (or any mix) — copy on one, paste on the other.
+- **Two Apple devices on different Apple IDs** — e.g. a work Mac and a personal
+  Mac — where Continuity won't bridge them.
+- Anyone who simply doesn't want clipboard contents leaving their LAN.
+
+If all your devices are Apple and share one Apple ID, you may not need this —
+Continuity already does it. Clippy's sync is for everyone else.
+
+### How it works
+
+- **What syncs:** text, images, and **any file** (video, PDF, …). Files arrive as
+  the real file (right name + type); images and videos show a preview tile.
 - **Discovery:** automatic via mDNS (zeroconf); falls back to a manual IP if your
-  network blocks multicast (`clippy pair <code> <ip>`).
-- **Security:** each device has a long-term X25519 identity; **pairing is
-  confirmed with a 6-digit code** (so a man-in-the-middle can't slip in a key);
-  every payload is encrypted + authenticated with NaCl. Only paired devices are
-  accepted; LAN-only.
+  network blocks multicast.
+- **Security:** each device has a long-term **X25519** identity key (stored
+  `0600`). **Pairing is confirmed with a 6-digit code**, so a man-in-the-middle
+  can't slip in a key. Every payload is encrypted + authenticated with **NaCl**.
+  Only paired devices are accepted, and traffic never leaves the LAN. Trust is
+  keyed to the stable identity key, so it survives a device's id changing.
+- **Size cap:** default **512 MiB**, raise up to **2 GiB** (enforced on both
+  ends). Transfers over ~5 MiB show a progress bar on the sender.
 
-**Enable + pair:**
-1. *Settings → Sync* → turn on **Sync clipboard over LAN**, restart Clippy.
-2. On one device: **Show pairing code** (CLI: `clippy pair`).
-3. On the other: **Enter code** (CLI: `clippy pair <code>`). Done — `clippy peers`
-   lists paired devices.
+### Enable & pair
 
-**macOS** is a full peer with its own panel and a native *Settings → Device
-sync* pane for pairing, unpairing, and the 6-digit code — see [macOS](#macos)
-for the app and how to install it.
+1. Turn on sync: **Linux** — *Settings → Sync*, then restart Clippy; **macOS** —
+   *Settings → Device sync*.
+2. On one device: **Show pairing code** (Linux CLI: `clippy pair`).
+3. On the other: **Enter code** (Linux CLI: `clippy pair <code>`, or
+   `clippy pair <code> <ip>` if multicast is blocked).
 
-Sync needs `python3-nacl` + `python3-zeroconf` (pulled in by the `.deb`); video
-preview thumbnails use `ffmpeg` if present.
+That's it — the macOS *Device sync* pane and `clippy peers` list paired devices,
+and either side can **unpair** later.
 
-## Install
+## How it's built
 
-### Ubuntu / Pop!_OS / Debian — recommended
+Same portable core (history, clipboard I/O, sync) on both platforms; the panel
+and OS integration use each platform's native mechanisms. macOS lets an app float
+a window over everything and grab a global hotkey; Wayland — by design — does
+not, so the Linux side uses the native Wayland protocols.
 
-Download the latest `clippy_*.deb` from the
-**[Releases page](https://github.com/davidboulay/clippy/releases/latest)**, then:
+| Need | Linux (Wayland) | macOS |
+|------|-----------------|-------|
+| Panel pinned to the screen edge | **wlr-layer-shell** (`gtk-layer-shell`) | borderless **NSPanel** at pop-up-menu window level |
+| Watch the clipboard | **`wl-paste --watch`** (`ext-data-control`) | **`NSPasteboard`** polling |
+| Global hotkey | a **COSMIC custom shortcut** running `clippy toggle` | **Carbon `RegisterEventHotKey`** (⌘⇧V) |
+| Menubar / tray presence | **StatusNotifierItem** (Ayatana AppIndicator) | **`NSStatusItem`** |
+| UI toolkit | **GTK 3** (PyGObject) | **AppKit** (PyObjC) |
+| Theme | reads COSMIC's `is_dark` | `NSAppearance` light/dark |
+| Storage | **SQLite** + files under `~/.local/share/clippy` | same (shared core) |
 
-```bash
-sudo apt install ./clippy_1.4.0_all.deb
+On Linux, one binary plays several roles:
+
+```
+clippy daemon    # tray + overlay panel + IPC server + clipboard watcher
+clippy toggle    # tiny client → tells the daemon to open/close (your shortcut runs this)
+clippy settings  # open the settings window
+clippy _store    # internal: wl-paste runs this on every clipboard change
 ```
 
-…or fetch it from the terminal with the GitHub CLI:
-
-```bash
-gh release download --repo davidboulay/clippy --pattern '*.deb'
-sudo apt install ./clippy_*.deb
-```
-
-`apt` pulls in the dependencies automatically. Then launch **Clippy** from your
-app list and open **Settings** to bind a shortcut (see below).
-
-### Other distributions
-
-- **Arch / Manjaro:** `cd packaging/arch && makepkg -si`
-- **AppImage** (experimental, any distro): `make appimage`, then run `dist/Clippy-*.AppImage`
-- **Flatpak / COSMIC Store:** ❌ not viable — COSMIC withholds the privileged
-  `layer-shell` and `data-control` Wayland protocols from Flatpak-sandboxed
-  apps, which Clippy's panel and clipboard watching require. Details in
-  [`FLATHUB.md`](FLATHUB.md).
-
-### From source
-
-```bash
-git clone https://github.com/davidboulay/clippy.git
-cd clippy
-./scripts/install.sh
-```
-
-`install.sh` (asks for `sudo` once) installs the dependencies, a
-`~/.local/bin/clippy` launcher and icon, enables autostart, and starts the
-daemon — a paperclip should appear in your COSMIC panel. To build a `.deb`
-yourself instead: `make deb`, then `sudo apt install ./dist/clippy_*.deb` (see
-[`packaging/README.md`](packaging/README.md)).
-
-Dependencies: `wl-clipboard`, `python3-gi`, `gir1.2-gtk-3.0`,
-`gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
-`gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
-plus `python3-nacl` + `python3-zeroconf` for sync (`ffmpeg` optional, for video
-preview thumbnails; `xclip` optional, to paste images/files into XWayland apps).
-
-### Set the shortcut
-
-Open the tray icon → **Settings** (or the ⚙ in the panel), click the shortcut
-button, and press your combo (e.g. <kbd>Super</kbd>+<kbd>V</kbd>). Clippy writes
-the COSMIC binding for you. To do it manually, run `clippy setup-shortcut`.
-
-> Tray not showing? Ensure COSMIC's **Status Area / applet** is on your panel.
-> Either way, the panel's ⚙ opens Settings and the shortcut still works.
-
-## Usage
-
-| Key / action | Effect |
-|---|---|
-| type | search history |
-| <kbd>←</kbd>/<kbd>→</kbd> or <kbd>↑</kbd>/<kbd>↓</kbd> | move between tiles |
-| <kbd>Enter</kbd> | copy selected tile & close |
-| <kbd>Ctrl</kbd>+<kbd>1…9</kbd> | copy the Nth tile & close |
-| <kbd>Ctrl</kbd>+<kbd>P</kbd> | pin/unpin selected |
-| <kbd>Delete</kbd> | remove selected |
-| <kbd>Esc</kbd> / click away | close |
-| left-click tile | copy & close (respects the plain-text setting) |
-| right-click tile | menu: paste / copy-as-plain / pin / delete |
-| middle-click tile | delete |
-
-After selecting a tile, paste with <kbd>Ctrl</kbd>+<kbd>V</kbd> as usual.
-
-### Other commands
-
-```bash
-clippy status            # is the daemon up? how many items?
-clippy settings          # open settings
-clippy clear [--all]     # wipe history (--all includes pinned)
-clippy quit              # stop the daemon
-```
+The shortcut → `toggle` → Unix socket → daemon path is what lets a global key
+open the panel without any forbidden hotkey grab. On macOS the menubar app hosts
+the panel directly.
 
 ## Configuration & data
 
-Preferences: `~/.config/clippy/settings.json` (edited via the Settings window).
-Fixed limits/geometry: `clippy/config.py`. Colors: `clippy/theme.py`.
+Everything stays local under `~/.local/share/clippy` (Linux) / the app's data
+dir (macOS):
 
-Everything stays local:
+- `history.db` — SQLite history (text + rich html inline)
+- `images/`, `files/`, `received/`, `thumbs/` — copied images, file payloads,
+  files received from peers, and cached previews
+- `identity.key` (`0600`) + `peers.json` — sync identity key and trusted devices
+- `copy.wav` — synthesized copy sound
 
-- `~/.local/share/clippy/history.db` — SQLite history (text + rich html inline)
-- `~/.local/share/clippy/images/`, `files/`, `received/`, `thumbs/` — copied
-  images, file payloads, files received from peers, and cached previews
-- `~/.local/share/clippy/identity.key` + `peers.json` — sync identity key (0600)
-  and trusted paired devices
-- `~/.local/share/clippy/copy.wav` — synthesized copy sound
-- `$XDG_RUNTIME_DIR/clippy.sock` — control socket (mode 0600)
-
-Nothing leaves your machine. `./scripts/uninstall.sh --purge` removes it all.
-A backup of your COSMIC shortcuts is kept at
-`…/CosmicSettings.Shortcuts/v1/custom.clippy.bak` the first time Clippy edits it.
+Preferences live in `settings.json` (Linux: `~/.config/clippy/`), edited via the
+Settings window. Fixed limits/geometry are in `clippy/config.py`. On Linux,
+`./scripts/uninstall.sh --purge` removes everything, and a backup of your COSMIC
+shortcuts is kept the first time Clippy edits them.
 
 ## Limitations
 
 - **No auto-paste.** Selecting a tile sets the clipboard; you press
-  <kbd>Ctrl</kbd>+<kbd>V</kbd> yourself (synthetic keystrokes on Wayland need
-  `ydotool`).
-- **Plain/rich** uses `text/html` for the rich case (wl-copy offers one type at
-  a time); plain-only apps still get plain text via the plain-text path.
-- **Multi-monitor:** the panel appears on the compositor's active output.
-- Needs a compositor with `wlr-layer-shell` **and** `ext-/wlr-data-control`
-  (COSMIC, Sway, Hyprland). A plain GNOME Wayland session lacks layer-shell.
+  <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd> yourself.
+- **Plain/rich** uses `text/html` for the rich case; plain-only apps still get
+  plain text via the plain-text path.
+- **Linux** needs a compositor with `wlr-layer-shell` **and**
+  `ext-/wlr-data-control` (COSMIC, Sway, Hyprland); a plain GNOME Wayland session
+  lacks layer-shell. The panel appears on the active output.
+- **macOS** builds are ad-hoc signed (no Developer ID), so Gatekeeper shows
+  "unidentified developer" on first launch.
 
 ## Project layout
 
 ```
 clippy/
-  cli.py             subcommand dispatch
+  cli.py             subcommand dispatch (Linux)
   daemon.py          AppController: tray + panel + settings + IPC + retention
-  panel.py           overlay panel, tiles, context menu, plain/rich paste
-  settings_window.py settings UI + shortcut capture
+  panel.py           Linux overlay panel, tiles, context menu, plain/rich paste
+  settings_window.py Linux settings UI + shortcut capture
   tray.py            AppIndicator tray icon
+  mac_app.py         macOS menubar app + global hotkey
+  mac_panel.py       macOS clipboard-history panel (tiles, tabs, filter, QuickLook)
+  mac_settings.py    macOS settings window
+  mac_tabs.py        macOS tabs  ·  mac_source.py  per-clip source-app map
   capture.py         read clipboard → storage (+ sound, retention)
   clipboard.py       backend dispatch (text/image/file read + write)
   backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
   sync.py            encrypted LAN sync engine (mDNS, pairing, streamed media)
   progress.py        sender transfer-progress window (large media)
-  mac_app.py         macOS menubar app + global hotkey
-  mac_panel.py       macOS clipboard-history panel (tiles, tabs, filter, QuickLook)
-  mac_settings.py    macOS settings window  ·  mac_tabs.py / mac_source.py  tabs + source-app map
   storage.py         SQLite history (+ html column, files, time retention)
   settings.py        JSON preferences
   theme.py           COSMIC light/dark → generated GTK CSS
@@ -278,6 +258,7 @@ clippy/
   setup.py           autostart + COSMIC shortcut editing
   ipc.py             Unix-socket control channel
   config.py          paths & limits
+packaging/           deb · arch · appimage · macos (py2app) builders
 scripts/install.sh · scripts/uninstall.sh · data/icons/clippy.png
 ```
 
