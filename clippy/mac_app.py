@@ -107,17 +107,54 @@ def run() -> int:
             icon = _menubar_icon_path()
             super().__init__("Clippy", title=None, icon=icon, template=True,
                              quit_button="Quit Clippy")
-            self.menu = ["Sync status", None, "Settings…", None,
+            self.menu = ["Sync status", None,
+                         "Show Clipboard History", None,
+                         "Settings…", None,
                          "Show pairing code", "Enter code…", None,
                          "Clipboard types (debug)"]
             self.menu["Sync status"].set_callback(None)   # info line, not clickable
             self._settings = None
             self._prog = None
             self._icon_path = icon
+            self._panel_ctrl = None
+            self._hotkey = None
             rumps.Timer(self._tick_progress, 0.4).start()
             rumps.Timer(self._tick_status, 5).start()
             rumps.Timer(self._fix_retina_icon, 1).start()  # one-shot (stops itself)
+            rumps.Timer(self._setup_panel, 0.3).start()    # one-shot (stops itself)
             self._tick_status(None)
+
+        def _setup_panel(self, timer):
+            # Build the history panel + register the global hotkey from inside the
+            # running NSApplication loop (AppKit/Carbon need the app event target).
+            timer.stop()
+            try:
+                from .mac_panel import CarbonHotKey, PanelController, parse_shortcut
+                self._panel_ctrl = PanelController.alloc().init()
+
+                def _open_settings():
+                    from .mac_settings import SettingsController
+                    if self._settings is None:
+                        self._settings = SettingsController.alloc().initWithEngine_(engine)
+                    self._settings.show()
+                self._panel_ctrl._open_settings = _open_settings   # cog button → Settings
+                # Mac-specific key (the shared "shortcut" is a Linux dict and
+                # Super+V maps to ⌘V, which collides with paste). Default ⌘⇧V.
+                keycode, mods = parse_shortcut(settings.get("mac_shortcut"))
+                self._hotkey = CarbonHotKey(keycode, mods, self._toggle_panel)
+            except Exception as exc:
+                import traceback
+                from .mac_panel import _log
+                _log(f"panel setup failed: {exc}\n{traceback.format_exc()}")
+
+        def _toggle_panel(self):
+            # Hotkey callback fires on the main run loop thread, so this is safe.
+            if self._panel_ctrl is not None:
+                self._panel_ctrl.toggle()
+
+        @rumps.clicked("Show Clipboard History")
+        def show_panel(self, _):
+            self._toggle_panel()
 
         def _fix_retina_icon(self, timer):
             # Use the native SF Symbol "paperclip" — vector, crisp at any density,
@@ -240,10 +277,26 @@ def run() -> int:
         finally:
             settings.set_value("mac_firewall_hint_shown", True)
 
+    def _frontmost_bundle_id():
+        try:
+            from AppKit import NSWorkspace
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            bid = app.bundleIdentifier() if app else None
+            return str(bid) if bid else None
+        except Exception:
+            return None
+
     def on_change():
         try:
+            src = _frontmost_bundle_id()   # the app the user copied from
             eid = capture_current()
             if eid:
+                if src:
+                    try:
+                        from . import mac_source
+                        mac_source.record(eid, src)
+                    except Exception:
+                        pass
                 engine.broadcast_id(eid)
         except Exception:
             pass
