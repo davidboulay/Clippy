@@ -112,6 +112,31 @@ _NS_LEFT = 0                # NSTextAlignmentLeft
 _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
                "heic", "heif", "avif", "ico", "svg"}
 _VIDEO_EXTS = {"mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg"}
+_AUDIO_EXTS = {"mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "aiff", "aif", "opus"}
+_ARCHIVE_EXTS = {"zip", "tar", "gz", "tgz", "bz2", "tbz", "7z", "rar", "xz", "zst", "dmg"}
+
+
+def _category(entry):
+    """Badge label + color for a history entry — granular for file kinds."""
+    if entry.kind == "text":
+        return "TEXT", NSColor.secondaryLabelColor()
+    if entry.is_image:                       # image DATA (Copy Image)
+        return "IMAGE", NSColor.systemTealColor()
+    mime = (entry.mime or "").lower()
+    ext = _ext(entry.filename or entry.text or "")
+    if mime.startswith("image/") or ext in _IMAGE_EXTS:
+        return "IMAGE", NSColor.systemTealColor()
+    if mime.startswith("video/") or ext in _VIDEO_EXTS:
+        return "VIDEO", NSColor.systemPinkColor()
+    if mime.startswith("audio/") or ext in _AUDIO_EXTS:
+        return "AUDIO", NSColor.systemPurpleColor()
+    if mime == "application/pdf" or ext == "pdf":
+        return "PDF", NSColor.systemRedColor()
+    if ext in _ARCHIVE_EXTS:
+        return "ZIP", NSColor.systemBrownColor()
+    if ext:
+        return ext.upper()[:6], NSColor.systemOrangeColor()
+    return "FILE", NSColor.systemOrangeColor()
 
 
 def _relative_time(ts: float) -> str:
@@ -317,10 +342,7 @@ def _make_tile(entry):
         NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.85).CGColor())
 
     # header: type badge (+ rich badge), pin marker
-    badge_txt, badge_col = (
-        ("IMAGE", NSColor.systemTealColor()) if entry.is_image else
-        ("FILE", NSColor.systemOrangeColor()) if entry.is_file else
-        ("TEXT", NSColor.secondaryLabelColor()))
+    badge_txt, badge_col = _category(entry)
     badge = _label(badge_txt, 9, badge_col, bold=True)
     badge.setFrame_(NSMakeRect(_TILE_PAD, h - _TILE_PAD - 16, 70, 14))
     tile.addSubview_(badge)
