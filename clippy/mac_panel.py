@@ -22,6 +22,7 @@ from AppKit import (
     NSApplication,
     NSApplicationActivateIgnoringOtherApps,
     NSBackingStoreBuffered,
+    NSButton,
     NSColor,
     NSEvent,
     NSEventMaskLeftMouseDown,
@@ -140,6 +141,15 @@ def _meta_text(entry) -> str:
     return f"{when}  ·  {len(text)} chars"
 
 
+def _action_button(title, size=13):
+    """A small borderless text button for a tile (pin / delete)."""
+    b = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 20, 20))
+    b.setTitle_(title)
+    b.setBordered_(False)
+    b.setFont_(NSFont.systemFontOfSize_(size))
+    return b
+
+
 def _load_entry(entry, mode="auto"):
     """Put a history entry back on the clipboard (mirrors panel.paste_entry).
 
@@ -225,10 +235,18 @@ def _make_tile(entry):
         rich = _label("RICH", 9, NSColor.systemPurpleColor(), bold=True)
         rich.setFrame_(NSMakeRect(_TILE_PAD + 50, h - _TILE_PAD - 16, 40, 14))
         tile.addSubview_(rich)
-    if entry.pinned:
-        star = _label("★", 12, NSColor.systemYellowColor(), _NS_CENTER)
-        star.setFrame_(NSMakeRect(w - _TILE_PAD - 18, h - _TILE_PAD - 17, 18, 16))
-        tile.addSubview_(star)
+    # delete + pin buttons (top-right); target/action wired in reload()
+    del_btn = _action_button("✕", 12)
+    del_btn.setFrame_(NSMakeRect(w - _TILE_PAD - 20, h - _TILE_PAD - 20, 20, 20))
+    del_btn.setTag_(entry.id)
+    tile.addSubview_(del_btn)
+    tile._del_btn = del_btn
+
+    pin_btn = _action_button("★" if entry.pinned else "☆", 14)
+    pin_btn.setFrame_(NSMakeRect(w - _TILE_PAD - 42, h - _TILE_PAD - 20, 20, 20))
+    pin_btn.setTag_(entry.id)
+    tile.addSubview_(pin_btn)
+    tile._pin_btn = pin_btn
 
     # footer: relative time + size/chars
     footer = _label(_meta_text(entry), 10, NSColor.secondaryLabelColor())
@@ -391,9 +409,13 @@ class TileView(NSView):
     """One history entry's card. The whole card is a single click target
     (subviews don't intercept); clicking loads the entry onto the clipboard."""
 
-    def hitTest_(self, point):          # noqa: N802 — collapse hits to the card
-        hit = objc.super(TileView, self).hitTest_(point)
-        return self if hit is not None else None
+    def hitTest_(self, point):          # noqa: N802 — collapse hits to the card,
+        hit = objc.super(TileView, self).hitTest_(point)   # except the action buttons
+        if hit is None:
+            return None
+        if hit is getattr(self, "_pin_btn", None) or hit is getattr(self, "_del_btn", None):
+            return hit
+        return self
 
     def mouseDown_(self, _event):       # noqa: N802
         ctrl = getattr(self, "_controller", None)
@@ -416,15 +438,19 @@ class ClippyPanel(NSPanel):
         else:
             self.orderOut_(None)
 
-    def performKeyEquivalent_(self, event):  # noqa: N802 — ⌘1–9 quick-copy
+    def performKeyEquivalent_(self, event):  # noqa: N802 — ⌘1–9 / ⌘P / ⌘⌫
         try:
             if event.modifierFlags() & NSEventModifierFlagCommand:
-                ch = event.charactersIgnoringModifiers()
-                if ch and len(ch) == 1 and ch in "123456789":
-                    d = self.delegate()
-                    if d is not None and d.respondsToSelector_(b"quickSelect:"):
-                        d.quickSelect_(int(ch))
-                        return True
+                ch = event.charactersIgnoringModifiers() or ""
+                d = self.delegate()
+                if d is None:
+                    return objc.super(ClippyPanel, self).performKeyEquivalent_(event)
+                if len(ch) == 1 and ch in "123456789":
+                    d.quickSelect_(int(ch)); return True
+                if ch in ("p", "P"):
+                    d.pinSelected(); return True
+                if ch == "\x7f":                 # ⌘+Delete → remove selected
+                    d.deleteSelected(); return True
         except Exception:
             pass
         return objc.super(ClippyPanel, self).performKeyEquivalent_(event)
@@ -545,6 +571,10 @@ class PanelController(NSObject):
             tile = _make_tile(e)
             tile._entry_id = e.id          # for click → selectEntry_
             tile._controller = self
+            tile._pin_btn.setTarget_(self)
+            tile._pin_btn.setAction_("pinClicked:")
+            tile._del_btn.setTarget_(self)
+            tile._del_btn.setAction_("deleteClicked:")
             tile.setFrame_(NSMakeRect(x, y, config.TILE_WIDTH, th))
             self._doc.addSubview_(tile)
             self._tiles.append(tile)
@@ -649,6 +679,40 @@ class PanelController(NSObject):
         i = int(n) - 1
         if 0 <= i < len(self._tiles):
             self.selectEntry_(self._tiles[i]._entry_id)
+
+    # -- pin / delete (buttons + ⌘P / ⌘⌫) --------------------------------
+    def pinClicked_(self, sender):
+        self._pin(int(sender.tag())); self.reload()
+
+    def deleteClicked_(self, sender):
+        self._delete(int(sender.tag())); self.reload()
+
+    def pinSelected(self):
+        if 0 <= self._sel < len(self._tiles):
+            self._pin(int(self._tiles[self._sel]._entry_id))
+            self.reload()
+
+    def deleteSelected(self):
+        if 0 <= self._sel < len(self._tiles):
+            keep = self._sel
+            self._delete(int(self._tiles[keep]._entry_id))
+            self.reload()
+            if self._tiles:
+                self._set_selection(min(keep, len(self._tiles) - 1))
+
+    @staticmethod
+    def _pin(entry_id):
+        try:
+            storage.toggle_pin(entry_id)
+        except Exception as exc:
+            _log(f"pin failed: {exc}")
+
+    @staticmethod
+    def _delete(entry_id):
+        try:
+            storage.delete(entry_id)
+        except Exception as exc:
+            _log(f"delete failed: {exc}")
 
     def hide(self):
         self._remove_click_monitor()
