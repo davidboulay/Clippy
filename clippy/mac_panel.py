@@ -46,7 +46,7 @@ from AppKit import (
 )
 from Foundation import NSMakeRect, NSMakeSize, NSObject
 
-from . import config, storage
+from . import clipboard, config, settings, storage
 
 # Carbon hot-key event constants.
 _kEventClassKeyboard = 0x6B657962      # 'keyb'
@@ -138,6 +138,33 @@ def _meta_text(entry) -> str:
     return f"{when}  ·  {len(text)} chars"
 
 
+def _load_entry(entry, mode="auto"):
+    """Put a history entry back on the clipboard (mirrors panel.paste_entry).
+
+    mode: 'auto' (respect always_plain_text), 'plain', or 'rich'. No auto-paste —
+    the user presses ⌘V themselves.
+    """
+    from pathlib import Path
+    try:
+        if entry.is_file and entry.image_path:
+            clipboard.copy_file(entry.image_path)
+        elif entry.is_image and entry.image_path:
+            clipboard.copy_image(Path(entry.image_path).read_bytes(),
+                                 entry.mime or "image/png")
+        else:
+            always_plain = bool(settings.get("always_plain_text"))
+            use_rich = (entry.html and mode != "plain"
+                        and (mode == "rich" or not always_plain))
+            if use_rich:
+                clipboard.copy_html(entry.html)
+            else:
+                clipboard.copy_text(entry.text or "")
+        return True
+    except Exception as exc:
+        _log(f"load entry failed: {exc}")
+        return False
+
+
 def _thumbnail_image(path, max_px):
     """Load a downscaled NSImage via ImageIO (loads only a ~max_px thumbnail,
     not the full-resolution bitmap — keeps memory + decode time small)."""
@@ -178,7 +205,7 @@ def _label(text, size, color, align=_NS_LEFT, bold=False):
 # -- tile builders (module-level: no instance state) ----------------------
 def _make_tile(entry):
     w, h = float(config.TILE_WIDTH), float(config.TILE_HEIGHT)
-    tile = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    tile = TileView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
     tile.setWantsLayer_(True)
     tile.layer().setCornerRadius_(10.0)
     tile.layer().setBackgroundColor_(
@@ -357,6 +384,22 @@ def parse_shortcut(spec):
     return _kVK_ANSI_V, mods
 
 
+# -- a clickable tile card ------------------------------------------------
+class TileView(NSView):
+    """One history entry's card. The whole card is a single click target
+    (subviews don't intercept); clicking loads the entry onto the clipboard."""
+
+    def hitTest_(self, point):          # noqa: N802 — collapse hits to the card
+        hit = objc.super(TileView, self).hitTest_(point)
+        return self if hit is not None else None
+
+    def mouseDown_(self, _event):       # noqa: N802
+        ctrl = getattr(self, "_controller", None)
+        eid = getattr(self, "_entry_id", None)
+        if ctrl is not None and eid is not None:
+            ctrl.selectEntry_(eid)
+
+
 # -- the panel window -----------------------------------------------------
 class ClippyPanel(NSPanel):
     """Borderless non-activating panel that can still take keyboard focus."""
@@ -466,6 +509,8 @@ class PanelController(NSObject):
         x = _GAP
         for e in entries:
             tile = _make_tile(e)
+            tile._entry_id = e.id          # for click → selectEntry_
+            tile._controller = self
             tile.setFrame_(NSMakeRect(x, y, config.TILE_WIDTH, th))
             self._doc.addSubview_(tile)
             x += config.TILE_WIDTH + _GAP
@@ -522,6 +567,17 @@ class PanelController(NSObject):
         if self._panel is not None:
             self._panel.orderOut_(None)
         self._restore_frontmost()
+
+    def selectEntry_(self, entry_id):
+        """Load the clicked entry onto the clipboard and close (no auto-paste —
+        focus returns to the previous app so the user's ⌘V lands there)."""
+        try:
+            e = storage.get(int(entry_id))
+        except Exception:
+            e = None
+        if e is not None:
+            _load_entry(e)
+        self.hide()
 
     # -- focus hand-off (so ⌘V targets the app you were in) --------------
     def _remember_frontmost(self):
