@@ -1,6 +1,6 @@
 # Clippy
 
-A clipboard-history panel for Linux, inspired by [Paste for macOS](https://pasteapp.io/).
+A clipboard-history panel for **Linux and macOS**, inspired by [Paste for macOS](https://pasteapp.io/).
 Press a global shortcut and a strip of tiles slides up from the bottom of the
 screen showing everything you've recently copied — text and images. Click a
 tile (or press <kbd>Enter</kbd>) to load it back onto the clipboard.
@@ -9,9 +9,10 @@ Lives in the **system tray** (a paperclip), never in the dock. Built for
 **Wayland** (developed on **Pop!_OS 24.04 + COSMIC**; also works on Sway,
 Hyprland, and other wlroots compositors).
 
-Now with **encrypted LAN clipboard sync** across your machines — copy on one
-device, paste on another — including images and files, plus a **macOS menubar
-companion app**. See [Cross-device sync](#cross-device-clipboard-sync).
+There's also a **full macOS app** — the same bottom-screen panel, summoned with
+<kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> — and **encrypted LAN clipboard sync** that
+ties them together: copy on one machine, paste on another, including images and
+files. See [macOS](#macos) and [Cross-device sync](#cross-device-clipboard-sync).
 
 ![Clippy's clipboard panel at the bottom of the screen](docs/screenshot.png)
 
@@ -66,6 +67,48 @@ clippy _store    # internal: wl-paste runs this on every clipboard change
 The shortcut → `toggle` → Unix socket → daemon path is what lets a global key
 open the panel without any forbidden hotkey grab.
 
+## macOS
+
+Clippy on macOS is a **full clipboard-history panel**, not just a sync peer. It
+lives in the **menubar** (a paperclip) and slides the same strip of tiles up
+from the bottom of the screen on <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd>.
+
+![Clippy's macOS panel over a browser window](docs/screenshot-macos.png)
+
+- **Native AppKit panel** floating over everything (no Accessibility permission
+  needed — the hotkey uses Carbon `RegisterEventHotKey`).
+- **Tiles per type** with a colored header, an SF Symbol, and the **icon of the
+  app you copied from**. Text, Image, Video, Audio, PDF, **CSV/Excel**, Archive,
+  and other files each get their own color.
+- **QuickLook thumbnails** for images, videos, PDFs and documents.
+- **Tabs** — *Recent*, *★ Pinned*, and your own custom tabs (colored, named);
+  pin a clip with ☆ and pick which tab it goes to.
+- **Type filter** next to the search box — show only one kind at a time.
+- **Search**, keyboard nav, <kbd>⌘</kbd>+<kbd>1…9</kbd> quick-select,
+  <kbd>⌘</kbd>+<kbd>P</kbd> pin, <kbd>⌘</kbd>+<kbd>⌫</kbd> delete.
+- **Right-click a text tile → Copy as Plain Text.**
+- **Settings**: copy sound, history retention + *Clear history now*, start at
+  login, updates, and device pairing/unpairing — all in a native window.
+- **Follows macOS light/dark** automatically.
+
+> Note: between two Apple devices on the **same Apple ID**, macOS Universal
+> Clipboard (Continuity) already shares the clipboard. Clippy's sync is what you
+> want across **different Apple IDs** (a work + a personal Mac) or between a Mac
+> and a **Linux** machine.
+
+**Install:** grab `Clippy-<ver>.dmg` from the
+**[Releases page](https://github.com/davidboulay/clippy/releases/latest)** and
+drag Clippy to *Applications*. Or build it yourself on a Mac:
+
+```bash
+git clone https://github.com/davidboulay/clippy.git && cd clippy
+./packaging/macos/build-app.sh --dmg      # → dist/Clippy.app and dist/Clippy-<ver>.dmg
+```
+
+The build is **ad-hoc signed** (no Apple Developer ID), so the first launch needs
+**right-click → Open** once (or `xattr -dr com.apple.quarantine /Applications/Clippy.app`).
+See [`packaging/macos/README.md`](packaging/macos/README.md).
+
 ## Cross-device clipboard sync
 
 Opt-in, **end-to-end-encrypted** clipboard sync over your LAN — no cloud, no
@@ -89,15 +132,9 @@ macOS** peers.
 3. On the other: **Enter code** (CLI: `clippy pair <code>`). Done — `clippy peers`
    lists paired devices.
 
-**macOS:** ships as a **menubar app** (no history panel — it's a sync peer for
-your Linux machines, with a native Settings window for updates, pairing, and
-start-at-login). Build it on a Mac:
-```bash
-git clone https://github.com/davidboulay/clippy.git && cd clippy
-./packaging/macos/build-app.sh --dmg      # → dist/Clippy.app and dist/Clippy-<ver>.dmg
-```
-See [`packaging/macos/README.md`](packaging/macos/README.md). (Unsigned build —
-right-click → Open the first time; Developer-ID signing/notarization is optional.)
+**macOS** is a full peer with its own panel and a native *Settings → Device
+sync* pane for pairing, unpairing, and the 6-digit code — see [macOS](#macos)
+for the app and how to install it.
 
 Sync needs `python3-nacl` + `python3-zeroconf` (pulled in by the `.deb`); video
 preview thumbnails use `ffmpeg` if present.
@@ -110,7 +147,7 @@ Download the latest `clippy_*.deb` from the
 **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**, then:
 
 ```bash
-sudo apt install ./clippy_1.3.4_all.deb
+sudo apt install ./clippy_1.4.0_all.deb
 ```
 
 …or fetch it from the terminal with the GitHub CLI:
@@ -231,7 +268,9 @@ clippy/
   backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
   sync.py            encrypted LAN sync engine (mDNS, pairing, streamed media)
   progress.py        sender transfer-progress window (large media)
-  mac_app.py         macOS menubar app  ·  mac_settings.py  macOS settings window
+  mac_app.py         macOS menubar app + global hotkey
+  mac_panel.py       macOS clipboard-history panel (tiles, tabs, filter, QuickLook)
+  mac_settings.py    macOS settings window  ·  mac_tabs.py / mac_source.py  tabs + source-app map
   storage.py         SQLite history (+ html column, files, time retention)
   settings.py        JSON preferences
   theme.py           COSMIC light/dark → generated GTK CSS
