@@ -36,6 +36,8 @@ from AppKit import (
     NSImageScaleProportionallyUpOrDown,
     NSImageView,
     NSLineBreakByTruncatingTail,
+    NSMenu,
+    NSMenuItem,
     NSPanel,
     NSScreen,
     NSScrollView,
@@ -50,9 +52,9 @@ from AppKit import (
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
-from Foundation import NSMakeRect, NSMakeSize, NSObject
+from Foundation import NSMakePoint, NSMakeRect, NSMakeSize, NSObject
 
-from . import clipboard, config, settings, sound, storage
+from . import clipboard, config, mac_tabs, settings, sound, storage
 
 # Carbon hot-key event constants.
 _kEventClassKeyboard = 0x6B657962      # 'keyb'
@@ -108,6 +110,21 @@ _GAP = 12.0                 # gap between tiles
 _TILE_PAD = 10.0            # inner padding within a tile
 _NS_CENTER = 1              # NSTextAlignmentCenter
 _NS_LEFT = 0                # NSTextAlignmentLeft
+_TAB_H = 26.0               # tab-bar row height
+# Mac-local tile size — slightly landscape (more rectangular than the Linux
+# square-ish tile), and a panel height tuned to fit it snugly.
+_TILE_W = 264.0
+_TILE_H = 214.0
+_PANEL_H = 312.0
+
+
+def _color_from_hex(hexstr, alpha=1.0):
+    try:
+        h = (hexstr or "").lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+        return NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, alpha)
+    except Exception:
+        return NSColor.systemGrayColor()
 
 _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
                "heic", "heif", "avif", "ico", "svg"}
@@ -117,26 +134,41 @@ _ARCHIVE_EXTS = {"zip", "tar", "gz", "tgz", "bz2", "tbz", "7z", "rar", "xz", "zs
 
 
 def _category(entry):
-    """Badge label + color for a history entry — granular for file kinds."""
+    """(label, color, SF-symbol name) for a history entry — granular for files."""
     if entry.kind == "text":
-        return "TEXT", NSColor.secondaryLabelColor()
+        return "TEXT", NSColor.secondaryLabelColor(), "text.alignleft"
     if entry.is_image:                       # image DATA (Copy Image)
-        return "IMAGE", NSColor.systemTealColor()
+        return "IMAGE", NSColor.systemTealColor(), "photo"
     mime = (entry.mime or "").lower()
     ext = _ext(entry.filename or entry.text or "")
     if mime.startswith("image/") or ext in _IMAGE_EXTS:
-        return "IMAGE", NSColor.systemTealColor()
+        return "IMAGE", NSColor.systemTealColor(), "photo"
     if mime.startswith("video/") or ext in _VIDEO_EXTS:
-        return "VIDEO", NSColor.systemPinkColor()
+        return "VIDEO", NSColor.systemPinkColor(), "film"
     if mime.startswith("audio/") or ext in _AUDIO_EXTS:
-        return "AUDIO", NSColor.systemPurpleColor()
+        return "AUDIO", NSColor.systemPurpleColor(), "music.note"
     if mime == "application/pdf" or ext == "pdf":
-        return "PDF", NSColor.systemRedColor()
+        return "PDF", NSColor.systemRedColor(), "doc.richtext"
     if ext in _ARCHIVE_EXTS:
-        return "ZIP", NSColor.systemBrownColor()
+        return "ZIP", NSColor.systemBrownColor(), "archivebox"
     if ext:
-        return ext.upper()[:6], NSColor.systemOrangeColor()
-    return "FILE", NSColor.systemOrangeColor()
+        return ext.upper()[:6], NSColor.systemOrangeColor(), "doc"
+    return "FILE", NSColor.systemOrangeColor(), "doc"
+
+
+def _symbol_view(name, color, px):
+    """An NSImageView showing a tinted SF Symbol (or empty if unavailable)."""
+    iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, px, px))
+    try:
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
+        if img is not None:
+            img.setTemplate_(True)
+            iv.setImage_(img)
+            iv.setContentTintColor_(color)
+            iv.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+    except Exception:
+        pass
+    return iv
 
 
 def _relative_time(ts: float) -> str:
@@ -167,6 +199,23 @@ def _meta_text(entry) -> str:
     if lines > 1:
         return f"{when}  ·  {len(text)} chars · {lines} lines"
     return f"{when}  ·  {len(text)} chars"
+
+
+def _attr_label(text, size, color, bold=False, tracking=0.0):
+    """A label with letter-spacing (tracking) for crisp badge/caption text."""
+    from AppKit import (
+        NSFontAttributeName,
+        NSForegroundColorAttributeName,
+        NSKernAttributeName,
+    )
+    from Foundation import NSAttributedString
+    f = NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size)
+    lbl = NSTextField.labelWithString_("")
+    lbl.setLineBreakMode_(NSLineBreakByTruncatingTail)
+    lbl.setAttributedStringValue_(NSAttributedString.alloc().initWithString_attributes_(
+        text or "", {NSForegroundColorAttributeName: color,
+                     NSFontAttributeName: f, NSKernAttributeName: tracking}))
+    return lbl
 
 
 def _action_button(title, size=13, color=None):
@@ -341,46 +390,84 @@ def _label(text, size, color, align=_NS_LEFT, bold=False):
     return lbl
 
 
+def _confirm(message, info):
+    """Modal OK/Cancel confirmation. Returns True on OK."""
+    from AppKit import NSAlert
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_(message)
+    if info:
+        alert.setInformativeText_(info)
+    alert.addButtonWithTitle_("OK")
+    alert.addButtonWithTitle_("Cancel")
+    return alert.runModal() == 1000
+
+
+def _text_dialog(title, default):
+    """Modal text prompt. Returns the entered string (stripped) or None."""
+    from AppKit import NSAlert
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.addButtonWithTitle_("OK")
+    alert.addButtonWithTitle_("Cancel")
+    tf = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 240, 22))
+    tf.setStringValue_(default or "")
+    alert.setAccessoryView_(tf)
+    alert.window().setInitialFirstResponder_(tf)
+    if alert.runModal() == 1000:
+        return (tf.stringValue() or "").strip() or None
+    return None
+
+
 # -- tile builders (module-level: no instance state) ----------------------
 def _make_tile(entry):
-    w, h = float(config.TILE_WIDTH), float(config.TILE_HEIGHT)
+    w, h = _TILE_W, _TILE_H
     tile = TileView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
     tile.setWantsLayer_(True)
-    tile.layer().setCornerRadius_(10.0)
+    tile.layer().setCornerRadius_(12.0)
     tile.layer().setMasksToBounds_(True)   # clip the header band to rounded corners
     tile.layer().setBackgroundColor_(
-        NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.85).CGColor())
+        NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.92).CGColor())
+    tile.layer().setBorderWidth_(0.5)
+    tile.layer().setBorderColor_(NSColor.separatorColor().CGColor())
 
-    # Colored header band — color + label vary by file type.
-    badge_txt, badge_col = _category(entry)
+    # Colored header band — color + file-type icon + label vary by file type.
+    badge_txt, badge_col, symbol = _category(entry)
     white = NSColor.whiteColor()
-    bh = 26.0
+    white90 = white.colorWithAlphaComponent_(0.92)
+    bh = 30.0
     band = NSView.alloc().initWithFrame_(NSMakeRect(0, h - bh, w, bh))
     band.setWantsLayer_(True)
     band.layer().setBackgroundColor_(badge_col.CGColor())
     tile.addSubview_(band)
 
-    title = badge_txt + ("  ·  RICH" if entry.has_formatting else "")
-    lbl = _label(title, 11, white, bold=True)
-    lbl.setFrame_(NSMakeRect(10, (bh - 16) / 2, w - 92, 16))
+    icon = _symbol_view(symbol, white, 16)
+    icon.setFrame_(NSMakeRect(11, (bh - 16) / 2, 16, 16))
+    band.addSubview_(icon)
+
+    lbl = _attr_label(badge_txt, 11, white, bold=True, tracking=0.8)
+    lbl.setFrame_(NSMakeRect(34, (bh - 16) / 2, w - 110, 16))
     band.addSubview_(lbl)
+    if entry.has_formatting:
+        rich = _attr_label("RICH", 8, white90, bold=True, tracking=0.6)
+        rich.setFrame_(NSMakeRect(w - 120, (bh - 13) / 2, 40, 13))
+        band.addSubview_(rich)
 
     # delete + pin on the band (white); target/action wired in reload()
-    del_btn = _action_button("✕", 13, white)
-    del_btn.setFrame_(NSMakeRect(w - 26, (bh - 20) / 2, 20, 20))
+    del_btn = _action_button("✕", 13, white90)
+    del_btn.setFrame_(NSMakeRect(w - 26, (bh - 22) / 2, 22, 22))
     del_btn.setTag_(entry.id)
     band.addSubview_(del_btn)
     tile._del_btn = del_btn
 
-    pin_btn = _action_button("★" if entry.pinned else "☆", 14, white)
-    pin_btn.setFrame_(NSMakeRect(w - 48, (bh - 20) / 2, 20, 20))
+    pin_btn = _action_button("★" if entry.pinned else "☆", 14, white90)
+    pin_btn.setFrame_(NSMakeRect(w - 48, (bh - 22) / 2, 22, 22))
     pin_btn.setTag_(entry.id)
     band.addSubview_(pin_btn)
     tile._pin_btn = pin_btn
 
     # footer: relative time + size/chars
-    footer = _label(_meta_text(entry), 10, NSColor.secondaryLabelColor())
-    footer.setFrame_(NSMakeRect(_TILE_PAD, _TILE_PAD, w - 2 * _TILE_PAD, 14))
+    footer = _label(_meta_text(entry), 10, NSColor.tertiaryLabelColor())
+    footer.setFrame_(NSMakeRect(_TILE_PAD + 2, _TILE_PAD - 2, w - 2 * _TILE_PAD - 2, 14))
     tile.addSubview_(footer)
 
     # content preview — fills between the footer and the header band
@@ -396,7 +483,7 @@ def _build_preview(entry, rect):
     ext = _ext(name)
     if path and (entry.is_image or mime.startswith("image/") or ext in _IMAGE_EXTS):
         # Downscaled thumbnail (cheap on memory); fall back to a full load.
-        img = (_thumbnail_image(path, int(config.TILE_WIDTH * 2))
+        img = (_thumbnail_image(path, int(_TILE_W * 2))
                or NSImage.alloc().initWithContentsOfFile_(path))
         if img is not None and img.isValid():
             iv = NSImageView.alloc().initWithFrame_(rect)
@@ -412,7 +499,7 @@ def _build_preview(entry, rect):
         key = entry.hash or os.path.basename(path)
         cache = _ql_cache_path(key)
         if cache.exists():
-            img = _thumbnail_image(str(cache), int(config.TILE_WIDTH * 2))
+            img = _thumbnail_image(str(cache), int(_TILE_W * 2))
             if img is not None and img.isValid():
                 iv = NSImageView.alloc().initWithFrame_(rect)
                 iv.setImage_(img)
@@ -423,19 +510,19 @@ def _build_preview(entry, rect):
             qext = ("." + ext) if ext else (mimetypes.guess_extension(mime) or "")
             threading.Thread(
                 target=_warm_ql_cache,
-                args=(path, qext, key, int(config.TILE_WIDTH * 2)),
+                args=(path, qext, key, int(_TILE_W * 2)),
                 daemon=True).start()
         is_video = mime.startswith("video/") or ext in _VIDEO_EXTS
         label = "VIDEO" if is_video else (ext.upper() or "FILE")
         return _centered(rect, [(label, 11, NSColor.secondaryLabelColor(), True),
                                 (name or "file", 11, NSColor.labelColor())])
-    # text snippet
+    # text snippet — larger, more readable
     tf = NSTextField.wrappingLabelWithString_((entry.text or "").strip()[:800])
-    tf.setFont_(NSFont.systemFontOfSize_(12))
+    tf.setFont_(NSFont.systemFontOfSize_(14))
     tf.setTextColor_(NSColor.labelColor())
     tf.setFrame_(rect)
     tf.setLineBreakMode_(NSLineBreakByTruncatingTail)
-    tf.setMaximumNumberOfLines_(10)
+    tf.setMaximumNumberOfLines_(8)
     return tf
 
 def _centered(rect, rows):
@@ -617,13 +704,16 @@ class PanelController(NSObject):
         self._query = ""
         self._tiles = []           # current TileViews, in display order
         self._sel = -1             # selected index for keyboard nav
+        self._tab = "recent"       # "recent" | "pinned" | <custom tab name>
+        self._tabbar = None        # container view rebuilt by _build_tabbar
+        self._tabids = []          # tag index -> tab id
         return self
 
     # -- building --------------------------------------------------------
     def _ensure_panel(self):
         if self._panel is not None:
             return
-        rect = NSMakeRect(0, 0, 800, config.PANEL_HEIGHT)
+        rect = NSMakeRect(0, 0, 800, _PANEL_H)
         # Borderless (activatable) NSPanel — we activate the app on show so it
         # floats over the Dock, then restore the previous app on hide.
         style = NSWindowStyleMaskBorderless
@@ -659,25 +749,37 @@ class PanelController(NSObject):
 
         full_w = 800.0
         sh = 28.0
-        sf_y = config.PANEL_HEIGHT - _PAD - sh
-        # Search field at the top (type to filter).
+        row_y = _PANEL_H - _PAD - sh
+        # Top row: a narrow search field on the LEFT, the tab bar CENTERED.
         search = NSSearchField.alloc().initWithFrame_(
-            NSMakeRect(_PAD, sf_y, full_w - 2 * _PAD, sh))
+            NSMakeRect(_PAD, row_y, 220, sh))
         search.setFont_(NSFont.systemFontOfSize_(13))
         search.setDelegate_(self)
-        search.setAutoresizingMask_(2 | 8)     # width-flexible, pinned to top
+        search.setAutoresizingMask_(4 | 8)     # pinned top-left, fixed size
         ve.addSubview_(search)
 
-        # Horizontal scroll of tiles below the search field, populated by reload().
-        scroll_h = sf_y - _PAD - 8
+        # Tab bar — full-width container; buttons are centered by _build_tabbar().
+        tabbar = NSView.alloc().initWithFrame_(
+            NSMakeRect(0, row_y + (sh - _TAB_H) / 2, full_w, _TAB_H))
+        tabbar.setAutoresizingMask_(2 | 8)     # width-flexible, pinned to top
+        ve.addSubview_(tabbar)
+        self._tabbar = tabbar
+
+        # Horizontal scroll of tiles below the top row, populated by reload().
+        scroll_h = row_y - _PAD - 8
         sframe = NSMakeRect(_PAD, _PAD, full_w - 2 * _PAD, scroll_h)
         scroll = NSScrollView.alloc().initWithFrame_(sframe)
         scroll.setHasHorizontalScroller_(True)
         scroll.setHasVerticalScroller_(False)
         scroll.setDrawsBackground_(False)
         scroll.setAutohidesScrollers_(True)
+        scroll.setScrollerStyle_(1)            # NSScrollerStyleOverlay — thin modern bar
         scroll.setBorderType_(0)               # NSNoBorder
         scroll.setAutoresizingMask_(2 | 16)    # width + height flexible
+        try:
+            scroll.horizontalScroller().setControlSize_(1)   # NSControlSizeSmall
+        except Exception:
+            pass
         doc = NSView.alloc().initWithFrame_(
             NSMakeRect(0, 0, sframe.size.width, sframe.size.height))
         scroll.setDocumentView_(doc)
@@ -688,6 +790,7 @@ class PanelController(NSObject):
         self._search = search
         self._scroll = scroll
         self._doc = doc
+        self._build_tabbar()
 
     # -- tiles -----------------------------------------------------------
     def reload(self):
@@ -699,20 +802,24 @@ class PanelController(NSObject):
         self._sel = -1
         vis_h = self._scroll.contentView().bounds().size.height
         vis_w = self._scroll.frame().size.width
-        try:
-            entries = storage.list_entries(query=self._query, limit=config.DISPLAY_LIMIT)
-        except Exception:
-            entries = []
+        entries = self._entries_for_tab()
         if not entries:
-            empty = "No matches." if self._query else "No clipboard history yet."
+            if self._query:
+                empty = "No matches."
+            elif self._tab == "pinned":
+                empty = "No pinned clips. Press ☆ on a clip to pin it."
+            elif self._tab not in ("recent", "pinned"):
+                empty = f"Nothing in “{self._tab}” yet. Press ☆ on a clip to add it."
+            else:
+                empty = "No clipboard history yet."
             msg = _label(empty, 14, NSColor.secondaryLabelColor(), _NS_CENTER)
             msg.setFrame_(NSMakeRect(0, vis_h / 2 - 12, vis_w, 24))
             self._doc.setFrameSize_(NSMakeSize(vis_w, vis_h))
             self._doc.addSubview_(msg)
             return
-        th = float(config.TILE_HEIGHT)
+        th = _TILE_H
         y = max(0.0, (vis_h - th) / 2)
-        x = _GAP
+        x = 0.0                       # first tile's left edge aligns with the search field
         for e in entries:
             tile = _make_tile(e)
             tile._entry_id = e.id          # for click → selectEntry_
@@ -721,10 +828,10 @@ class PanelController(NSObject):
             tile._pin_btn.setAction_("pinClicked:")
             tile._del_btn.setTarget_(self)
             tile._del_btn.setAction_("deleteClicked:")
-            tile.setFrame_(NSMakeRect(x, y, config.TILE_WIDTH, th))
+            tile.setFrame_(NSMakeRect(x, y, _TILE_W, th))
             self._doc.addSubview_(tile)
             self._tiles.append(tile)
-            x += config.TILE_WIDTH + _GAP
+            x += _TILE_W + _GAP
         self._doc.setFrameSize_(NSMakeSize(max(x, vis_w), vis_h))
         if self._tiles:
             self._set_selection(0)
@@ -736,7 +843,7 @@ class PanelController(NSObject):
         screen = self._screen_under_cursor()
         area = screen.frame()
         width = area.size.width                 # flush to both side edges
-        height = float(config.PANEL_HEIGHT)
+        height = _PANEL_H
         x = area.origin.x
         y = area.origin.y                        # flush to the bottom edge
         self._panel.setFrame_display_(NSMakeRect(x, y, width, height), True)
@@ -768,6 +875,7 @@ class PanelController(NSObject):
         self._query = ""
         self._search.setStringValue_("")
         self._position()
+        self._build_tabbar()        # re-center for the actual (full-screen) width
         self.reload()
         # Activate our app so the popUpMenu-level panel draws OVER the Dock
         # (the Dock stays above background apps' windows). CrossPaste's approach.
@@ -826,32 +934,225 @@ class PanelController(NSObject):
         if 0 <= i < len(self._tiles):
             self.selectEntry_(self._tiles[i]._entry_id)
 
-    # -- pin / delete (buttons + ⌘P / ⌘⌫) --------------------------------
+    # -- tabs ------------------------------------------------------------
+    def _entries_for_tab(self):
+        q = self._query
+        try:
+            if self._tab == "recent":
+                return storage.list_entries(query=q, limit=config.DISPLAY_LIMIT,
+                                            pinned=False)
+            if self._tab == "pinned":
+                members = mac_tabs.all_member_ids()
+                return [e for e in storage.list_entries(query=q, limit=config.DISPLAY_LIMIT,
+                                                        pinned=True)
+                        if e.id not in members]
+            # custom tab
+            ents = [storage.get(i) for i in mac_tabs.member_ids(self._tab)]
+            ents = [e for e in ents if e is not None]
+            if q:
+                ql = q.lower()
+                ents = [e for e in ents
+                        if ql in (e.text or "").lower() or ql in (e.filename or "").lower()]
+            ents.sort(key=lambda e: e.created_at, reverse=True)
+            return ents[:config.DISPLAY_LIMIT]
+        except Exception as exc:
+            _log(f"entries_for_tab failed: {exc}")
+            return []
+
+    def _build_tabbar(self):
+        if self._tabbar is None:
+            return
+        for v in list(self._tabbar.subviews()):
+            v.removeFromSuperview()
+        self._tabids = []
+        rows = [("recent", "Recent", NSColor.labelColor()),
+                ("pinned", "★ Pinned", NSColor.labelColor())]
+        for t in mac_tabs.tabs():
+            rows.append((t["name"], "● " + t["name"], _color_from_hex(t.get("color"))))
+        # Build the buttons first (to measure), then lay them out centered.
+        btns = []
+        for tab_id, label, color in rows:
+            tag = len(self._tabids)
+            self._tabids.append(tab_id)
+            b = self._tab_button(label, color, self._tab == tab_id, tag)
+            if tab_id not in ("recent", "pinned"):
+                b.setMenu_(self._tab_mgmt_menu(tab_id))   # right-click to manage
+            btns.append(b)
+        plus = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 26, _TAB_H))
+        plus.setBordered_(False)
+        plus.setFont_(NSFont.boldSystemFontOfSize_(16))
+        plus.setTitle_("+")
+        plus.setTarget_(self)
+        plus.setAction_(b"createTab:")
+        gap = 8.0
+        widths = [b.frame().size.width + 18 for b in btns] + [26.0]
+        total = sum(widths) + gap * (len(widths) - 1)
+        cw = self._tabbar.frame().size.width
+        # Centered, but never under the left search field (_PAD + 220 = 236).
+        x = max(236.0 + gap, (cw - total) / 2.0)
+        for b, w in zip(btns + [plus], widths):
+            b.setFrame_(NSMakeRect(x, 0, w, _TAB_H))
+            self._tabbar.addSubview_(b)
+            x += w + gap
+
+    def _tab_button(self, label, color, active, tag):
+        from AppKit import NSFontAttributeName, NSForegroundColorAttributeName
+        from Foundation import NSAttributedString
+        font = (NSFont.boldSystemFontOfSize_(12) if active
+                else NSFont.systemFontOfSize_(12))
+        col = color if active else color.colorWithAlphaComponent_(0.5)
+        b = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 10, _TAB_H))
+        b.setBordered_(False)
+        b.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+            label, {NSForegroundColorAttributeName: col, NSFontAttributeName: font}))
+        b.setTag_(tag)
+        b.setTarget_(self)
+        b.setAction_(b"selectTab:")
+        b.sizeToFit()
+        if active:                              # subtle pill behind the active tab
+            b.setWantsLayer_(True)
+            b.layer().setBackgroundColor_(
+                NSColor.labelColor().colorWithAlphaComponent_(0.10).CGColor())
+            b.layer().setCornerRadius_(_TAB_H / 2.0 - 2.0)
+        return b
+
+    def selectTab_(self, sender):
+        i = sender.tag()
+        if not (0 <= i < len(self._tabids)):
+            return
+        self._tab = self._tabids[i]
+        self._build_tabbar()
+        self.reload()
+
+    def _tab_mgmt_menu(self, name):
+        """Right-click menu for a custom tab: rename / recolor / delete."""
+        from AppKit import NSFontAttributeName, NSForegroundColorAttributeName
+        from Foundation import NSAttributedString
+        menu = NSMenu.alloc().init()
+        rn = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Rename…", b"renameTab:", "")
+        rn.setTarget_(self); rn.setRepresentedObject_({"tab": name})
+        menu.addItem_(rn)
+        color_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Color", None, "")
+        submenu = NSMenu.alloc().init()
+        for hexc in mac_tabs.PALETTE:
+            it = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("color", b"recolorTab:", "")
+            it.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+                "●●●●●●", {NSForegroundColorAttributeName: _color_from_hex(hexc),
+                           NSFontAttributeName: NSFont.systemFontOfSize_(13)}))
+            it.setTarget_(self); it.setRepresentedObject_({"tab": name, "color": hexc})
+            submenu.addItem_(it)
+        color_item.setSubmenu_(submenu)
+        menu.addItem_(color_item)
+        menu.addItem_(NSMenuItem.separatorItem())
+        dl = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            f"Delete “{name}”", b"deleteTab:", "")
+        dl.setTarget_(self); dl.setRepresentedObject_({"tab": name})
+        menu.addItem_(dl)
+        return menu
+
+    def renameTab_(self, sender):
+        old = sender.representedObject()["tab"]
+        new = _text_dialog("Rename tab", old)
+        if new and mac_tabs.rename_tab(old, new):
+            if self._tab == old:
+                self._tab = new
+            self._build_tabbar()
+            self.reload()
+
+    def recolorTab_(self, sender):
+        info = sender.representedObject()
+        mac_tabs.set_color(info["tab"], info["color"])
+        self._build_tabbar()
+
+    def deleteTab_(self, sender):
+        name = sender.representedObject()["tab"]
+        if not _confirm(f"Delete the “{name}” tab?",
+                             "The clips stay in your history; only the tab is removed."):
+            return
+        mac_tabs.remove_tab(name)
+        if self._tab == name:
+            self._tab = "recent"
+        self._build_tabbar()
+        self.reload()
+
+    def createTab_(self, _sender):
+        res = self._create_tab_dialog()
+        if res and mac_tabs.add_tab(res[0], res[1]):
+            self._tab = res[0]
+            self._build_tabbar()
+            self.reload()
+
+    def pickedTab_(self, sender):
+        self._add_to(int(sender.tag()), str(sender.representedObject()))
+        self.reload()
+
+    # -- pin / add-to-tab / delete (buttons + ⌘P / ⌘⌫) -------------------
     def pinClicked_(self, sender):
-        self._pin(int(sender.tag())); self.reload()
+        self._toggle_membership(int(sender.tag()), sender)
+
+    def _toggle_membership(self, eid, anchor):
+        # Remove if it's already in the tab we're viewing (with confirmation).
+        if self._tab == "pinned" and eid not in mac_tabs.all_member_ids():
+            if _confirm("Unpin this clip?", ""):
+                self._set_pinned(eid, False); self.reload()
+            return
+        if self._tab not in ("recent", "pinned") and self._tab in mac_tabs.tabs_for(eid):
+            if _confirm(f"Remove this clip from “{self._tab}”?", ""):
+                mac_tabs.unassign(eid, self._tab); self.reload()
+            return
+        # Otherwise add: pick a destination if custom tabs exist, else Pinned.
+        if mac_tabs.tab_names() and anchor is not None:
+            self._show_tab_picker(anchor, eid)
+        else:
+            self._add_to(eid, "pinned"); self.reload()
+
+    def _add_to(self, eid, dest):
+        self._set_pinned(eid, True)
+        if dest != "pinned":
+            mac_tabs.assign(eid, dest)
+
+    def _show_tab_picker(self, anchor, eid):
+        menu = NSMenu.alloc().init()
+        items = ([("pinned", "★ Pinned")]
+                 + [(t["name"], "● " + t["name"]) for t in mac_tabs.tabs()])
+        for dest, label in items:
+            it = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(label, b"pickedTab:", "")
+            it.setTarget_(self)
+            it.setTag_(eid)
+            it.setRepresentedObject_(dest)
+            menu.addItem_(it)
+        # Drop the picker directly underneath the ☆ button.
+        menu.popUpMenuPositioningItem_atLocation_inView_(None, NSMakePoint(0, 0), anchor)
+
+    @staticmethod
+    def _set_pinned(eid, flag):
+        try:
+            e = storage.get(eid)
+            if e is not None and bool(e.pinned) != bool(flag):
+                storage.toggle_pin(eid)
+        except Exception as exc:
+            _log(f"set_pinned failed: {exc}")
 
     def deleteClicked_(self, sender):
+        if not _confirm("Delete this clip?", "It will be removed from your history."):
+            return
         self._delete(int(sender.tag())); self.reload()
 
     def pinSelected(self):
         if 0 <= self._sel < len(self._tiles):
-            self._pin(int(self._tiles[self._sel]._entry_id))
-            self.reload()
+            self._toggle_membership(int(self._tiles[self._sel]._entry_id),
+                                    self._tiles[self._sel]._pin_btn)
 
     def deleteSelected(self):
         if 0 <= self._sel < len(self._tiles):
             keep = self._sel
+            if not _confirm("Delete this clip?",
+                                 "It will be removed from your history."):
+                return
             self._delete(int(self._tiles[keep]._entry_id))
             self.reload()
             if self._tiles:
                 self._set_selection(min(keep, len(self._tiles) - 1))
-
-    @staticmethod
-    def _pin(entry_id):
-        try:
-            storage.toggle_pin(entry_id)
-        except Exception as exc:
-            _log(f"pin failed: {exc}")
 
     @staticmethod
     def _delete(entry_id):
@@ -859,6 +1160,53 @@ class PanelController(NSObject):
             storage.delete(entry_id)
         except Exception as exc:
             _log(f"delete failed: {exc}")
+
+    # -- create-tab dialog (name + fixed color palette) ------------------
+    def _create_tab_dialog(self):
+        from AppKit import NSAlert
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("New tab")
+        alert.setInformativeText_("Name and color:")
+        alert.addButtonWithTitle_("Create")
+        alert.addButtonWithTitle_("Cancel")
+        w, h = 300.0, 72.0
+        acc = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+        name = NSTextField.alloc().initWithFrame_(NSMakeRect(0, h - 24, w, 22))
+        name.setPlaceholderString_("Tab name")
+        acc.addSubview_(name)
+        self._pending_color = mac_tabs.PALETTE[0]
+        self._swatches = []
+        sw, gap = 26.0, 6.0
+        for i, hexc in enumerate(mac_tabs.PALETTE):
+            b = NSButton.alloc().initWithFrame_(NSMakeRect(i * (sw + gap), 6, sw, sw))
+            b.setBordered_(False)
+            b.setTitle_("")
+            b.setWantsLayer_(True)
+            b.layer().setBackgroundColor_(_color_from_hex(hexc).CGColor())
+            b.layer().setCornerRadius_(6.0)
+            b.setTag_(i)
+            b.setTarget_(self)
+            b.setAction_(b"swatchPicked:")
+            acc.addSubview_(b)
+            self._swatches.append(b)
+        self._mark_swatch(0)
+        alert.setAccessoryView_(acc)
+        alert.window().setInitialFirstResponder_(name)
+        if alert.runModal() == 1000:               # NSAlertFirstButtonReturn
+            nm = (name.stringValue() or "").strip()
+            if nm:
+                return nm, self._pending_color
+        return None
+
+    def swatchPicked_(self, sender):
+        i = int(sender.tag())
+        self._pending_color = mac_tabs.PALETTE[i]
+        self._mark_swatch(i)
+
+    def _mark_swatch(self, idx):
+        for i, b in enumerate(getattr(self, "_swatches", [])):
+            b.layer().setBorderWidth_(3.0 if i == idx else 0.0)
+            b.layer().setBorderColor_(NSColor.labelColor().CGColor())
 
     def hide(self):
         self._remove_click_monitor()
@@ -875,6 +1223,10 @@ class PanelController(NSObject):
             e = None
         if e is not None:
             _load_entry(e)
+            try:
+                storage.touch(int(entry_id))   # recovered clip jumps to the front
+            except Exception:
+                pass
         self.hide()
 
     # -- focus hand-off (so ⌘V targets the app you were in) --------------
