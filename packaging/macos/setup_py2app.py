@@ -20,7 +20,7 @@ OPTIONS = {
     # Recursively bundle these packages (incl. their compiled .so files):
     #  - nacl + cffi: PyNaCl reaches libsodium through cffi/_cffi_backend
     #  - zeroconf + ifaddr (+ async_timeout): mDNS discovery
-    "packages": ["clippy", "nacl", "cffi", "zeroconf", "ifaddr", "rumps"],
+    "packages": ["clippy", "nacl", "cffi", "zeroconf", "ifaddr", "rumps", "Quartz"],
     "includes": ["_cffi_backend", "async_timeout", "AppKit", "Foundation", "objc"],
     # Copy the menubar template icons into Contents/Resources (packages alone
     # doesn't reliably bundle package data files).
