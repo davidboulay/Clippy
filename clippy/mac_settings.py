@@ -69,7 +69,7 @@ class SettingsController(NSObject):
         return self
 
     def _build(self):
-        W, H = 440, 524
+        W, H = 440, 624
         style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                  | NSWindowStyleMaskMiniaturizable)
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -143,6 +143,28 @@ class SettingsController(NSObject):
         self.sound_choice.setAction_(b"soundChoiceChanged:")
         view.addSubview_(self.sound_choice)
         view.addSubview_(_button("Preview", 280, y - 2, 90, 28, self, b"previewSound:"))
+
+        # -- History ------------------------------------------------------
+        y -= 46
+        view.addSubview_(_label("History", 20, y, 200, 20, bold=True, size=13))
+        y -= 30
+        view.addSubview_(_label("Keep history for", 20, y + 2, 120, 20, size=12))
+        self._ret_keys = [k for k, _l, _s in config.RETENTION_OPTIONS]
+        self.ret_choice = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            NSMakeRect(150, y - 2, 150, 26), False)
+        for _k, lbl, _s in config.RETENTION_OPTIONS:
+            self.ret_choice.addItemWithTitle_(lbl)
+        rk = settings.get("retention")
+        if rk in self._ret_keys:
+            self.ret_choice.selectItemAtIndex_(self._ret_keys.index(rk))
+        self.ret_choice.setTarget_(self)
+        self.ret_choice.setAction_(b"retentionChanged:")
+        view.addSubview_(self.ret_choice)
+        y -= 38
+        view.addSubview_(_button("Clear history now", 20, y, 180, 28,
+                                 self, b"clearHistory:"))
+        self.clear_status = _label("", 210, y + 4, 210, 18, size=11)
+        view.addSubview_(self.clear_status)
 
         self.refreshPeers()
 
@@ -237,3 +259,25 @@ class SettingsController(NSObject):
 
     def previewSound_(self, sender):
         sound.play(self._selected_sound())
+
+    def retentionChanged_(self, sender):
+        i = self.ret_choice.indexOfSelectedItem()
+        if 0 <= i < len(self._ret_keys):
+            settings.set_value("retention", self._ret_keys[i])
+            try:
+                from . import storage
+                storage.apply_retention()
+            except Exception:
+                pass
+
+    def clearHistory_(self, sender):
+        from AppKit import NSAlert
+        from . import storage
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("Clear clipboard history?")
+        alert.setInformativeText_("Pinned clips and clips in tabs are kept.")
+        alert.addButtonWithTitle_("Clear")
+        alert.addButtonWithTitle_("Cancel")
+        if alert.runModal() == 1000:
+            storage.clear(include_pinned=False)
+            self.clear_status.setStringValue_("History cleared.")
