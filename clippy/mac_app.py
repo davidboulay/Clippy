@@ -131,6 +131,13 @@ def run() -> int:
             try:
                 from .mac_panel import CarbonHotKey, PanelController, parse_shortcut
                 self._panel_ctrl = PanelController.alloc().init()
+
+                def _open_settings():
+                    from .mac_settings import SettingsController
+                    if self._settings is None:
+                        self._settings = SettingsController.alloc().initWithEngine_(engine)
+                    self._settings.show()
+                self._panel_ctrl._open_settings = _open_settings   # cog button → Settings
                 # Mac-specific key (the shared "shortcut" is a Linux dict and
                 # Super+V maps to ⌘V, which collides with paste). Default ⌘⇧V.
                 keycode, mods = parse_shortcut(settings.get("mac_shortcut"))
@@ -270,10 +277,26 @@ def run() -> int:
         finally:
             settings.set_value("mac_firewall_hint_shown", True)
 
+    def _frontmost_bundle_id():
+        try:
+            from AppKit import NSWorkspace
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            bid = app.bundleIdentifier() if app else None
+            return str(bid) if bid else None
+        except Exception:
+            return None
+
     def on_change():
         try:
+            src = _frontmost_bundle_id()   # the app the user copied from
             eid = capture_current()
             if eid:
+                if src:
+                    try:
+                        from . import mac_source
+                        mac_source.record(eid, src)
+                    except Exception:
+                        pass
                 engine.broadcast_id(eid)
         except Exception:
             pass
