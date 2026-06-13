@@ -15,6 +15,8 @@ macOS only (PyObjC/AppKit). Owned by the Mac build; not imported on Linux.
 from __future__ import annotations
 
 import ctypes
+import os
+import threading
 import time as _time
 
 import objc
@@ -22,6 +24,7 @@ from AppKit import (
     NSApplication,
     NSApplicationActivateIgnoringOtherApps,
     NSBackingStoreBuffered,
+    NSBitmapImageRep,
     NSButton,
     NSColor,
     NSEvent,
@@ -208,6 +211,85 @@ def _thumbnail_image(path, max_px):
         return None
 
 
+_NS_PNG_FILETYPE = 4          # NSBitmapImageFileTypePNG
+_ql_inflight = set()          # keys currently being generated (dedup)
+_ql_lock = threading.Lock()
+
+
+def _ql_cache_path(key):
+    return config.THUMB_DIR / f"{key}.png"
+
+
+def _write_png(nsimage, path):
+    tiff = nsimage.TIFFRepresentation()
+    if tiff is None:
+        return False
+    rep = NSBitmapImageRep.imageRepWithData_(tiff)
+    if rep is None:
+        return False
+    data = rep.representationUsingType_properties_(_NS_PNG_FILETYPE, {})
+    return bool(data and data.writeToFile_atomically_(path, True))
+
+
+def _warm_ql_cache(blob, ext, key, px):
+    """Generate a QuickLook thumbnail for a file and cache it as a PNG (run on a
+    background thread). Our blobs are hash-named, so QuickLook can't infer the
+    type — point a correctly-suffixed symlink at the blob so it can. Fire-and-
+    forget: the thumbnail shows the next time the panel opens (cache hit)."""
+    cache = _ql_cache_path(key)
+    if cache.exists():
+        return
+    with _ql_lock:
+        if key in _ql_inflight:
+            return
+        _ql_inflight.add(key)
+    link = None
+    try:
+        from Foundation import NSMakeSize, NSURL
+        from QuickLookThumbnailing import (
+            QLThumbnailGenerationRequest,
+            QLThumbnailGenerationRequestRepresentationTypeAll,
+            QLThumbnailGenerator,
+        )
+        config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        src = blob
+        if ext:
+            link = config.THUMB_DIR / f"ql-{key}{ext}"
+            try:
+                if not link.exists():
+                    os.symlink(blob, link)
+                src = str(link)
+            except OSError:
+                link = None
+        req = QLThumbnailGenerationRequest.alloc().initWithFileAtURL_size_scale_representationTypes_(
+            NSURL.fileURLWithPath_(src), NSMakeSize(px, px), 2.0,
+            QLThumbnailGenerationRequestRepresentationTypeAll)
+        ev = threading.Event()
+        box = {}
+
+        def _handler(rep, _err):
+            box["rep"] = rep
+            ev.set()
+
+        QLThumbnailGenerator.sharedGenerator().generateBestRepresentationForRequest_completionHandler_(
+            req, _handler)
+        ev.wait(6.0)
+        rep = box.get("rep")
+        img = rep.NSImage() if rep is not None else None
+        if img is not None:
+            _write_png(img, str(cache))
+    except Exception as exc:
+        _log(f"ql thumb failed for {key}: {exc}")
+    finally:
+        if link is not None:
+            try:
+                link.unlink()
+            except OSError:
+                pass
+        with _ql_lock:
+            _ql_inflight.discard(key)
+
+
 def _label(text, size, color, align=_NS_LEFT, bold=False):
     f = NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size)
     lbl = NSTextField.labelWithString_(text or "")
@@ -280,13 +362,29 @@ def _build_preview(entry, rect):
         if entry.is_image:
             return _centered(rect, [("[image unavailable]", 12,
                                           NSColor.secondaryLabelColor())])
-    if path and (mime.startswith("video/") or ext in _VIDEO_EXTS):
-        return _centered(rect, [("VIDEO", 11, NSColor.secondaryLabelColor(), True),
-                                     (name or "video", 11, NSColor.labelColor())])
-    if entry.is_file:
-        return _centered(rect, [((ext.upper() or "FILE"), 11,
-                                      NSColor.secondaryLabelColor(), True),
-                                     (name or "file", 11, NSColor.labelColor())])
+    if path and entry.is_file:
+        # Files & videos: a real QuickLook thumbnail, cached on disk. On a cache
+        # miss, warm it in the background and show a type card for now.
+        key = entry.hash or os.path.basename(path)
+        cache = _ql_cache_path(key)
+        if cache.exists():
+            img = _thumbnail_image(str(cache), int(config.TILE_WIDTH * 2))
+            if img is not None and img.isValid():
+                iv = NSImageView.alloc().initWithFrame_(rect)
+                iv.setImage_(img)
+                iv.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+                return iv
+        else:
+            import mimetypes
+            qext = ("." + ext) if ext else (mimetypes.guess_extension(mime) or "")
+            threading.Thread(
+                target=_warm_ql_cache,
+                args=(path, qext, key, int(config.TILE_WIDTH * 2)),
+                daemon=True).start()
+        is_video = mime.startswith("video/") or ext in _VIDEO_EXTS
+        label = "VIDEO" if is_video else (ext.upper() or "FILE")
+        return _centered(rect, [(label, 11, NSColor.secondaryLabelColor(), True),
+                                (name or "file", 11, NSColor.labelColor())])
     # text snippet
     tf = NSTextField.wrappingLabelWithString_((entry.text or "").strip()[:800])
     tf.setFont_(NSFont.systemFontOfSize_(12))

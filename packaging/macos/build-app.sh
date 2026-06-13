@@ -24,7 +24,8 @@ python3 -m venv "$VENV"
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 pip install --quiet --upgrade pip wheel
-pip install --quiet pynacl zeroconf rumps pyobjc-framework-Cocoa pyobjc-framework-Quartz py2app
+pip install --quiet pynacl zeroconf rumps pyobjc-framework-Cocoa pyobjc-framework-Quartz \
+            pyobjc-framework-QuickLookThumbnailing py2app
 
 # Regenerate a crisp multi-size app icon from the 512px source (Apple tools).
 ICNS="packaging/macos/clippy.icns"
