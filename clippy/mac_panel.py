@@ -49,7 +49,7 @@ from AppKit import (
 )
 from Foundation import NSMakeRect, NSMakeSize, NSObject
 
-from . import clipboard, config, settings, storage
+from . import clipboard, config, settings, sound, storage
 
 # Carbon hot-key event constants.
 _kEventClassKeyboard = 0x6B657962      # 'keyb'
@@ -171,6 +171,10 @@ def _load_entry(entry, mode="auto"):
                 clipboard.copy_html(entry.html)
             else:
                 clipboard.copy_text(entry.text or "")
+        # Recovering a clip is a copy action — play the copy sound if enabled
+        # (the watcher skips our own clipboard writes, so do it explicitly).
+        if settings.get("sound_on_copy"):
+            sound.play()
         return True
     except Exception as exc:
         _log(f"load entry failed: {exc}")
