@@ -1,6 +1,7 @@
 name: Release
 
-# Push a tag like v0.2.0 to build the .deb and publish a GitHub Release.
+# Push a tag like v0.2.0 to build the Linux .deb + macOS .dmg and publish a
+# GitHub Release with both artifacts.
 on:
   push:
     tags:
@@ -30,3 +31,25 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/*.deb \
             --title "${GITHUB_REF_NAME}" --generate-notes \
           || gh release upload "${GITHUB_REF_NAME}" dist/*.deb --clobber
+
+  macos:
+    runs-on: macos-latest
+    # Run after the .deb job so the release already exists; this job only
+    # uploads the .dmg to it. The .app is ad-hoc signed (no Developer ID), so
+    # Gatekeeper still shows "unidentified developer" on first launch.
+    needs: deb
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build .app + .dmg
+        run: ./packaging/macos/build-app.sh --dmg
+
+      - name: Upload the .dmg to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The deb job already created the release; upload with --clobber so
+          # re-runs are idempotent. Fall back to create if it's somehow missing.
+          gh release upload "${GITHUB_REF_NAME}" dist/*.dmg --clobber \
+          || gh release create "${GITHUB_REF_NAME}" dist/*.dmg \
+               --title "${GITHUB_REF_NAME}" --generate-notes
