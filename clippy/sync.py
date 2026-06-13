@@ -214,6 +214,14 @@ class SyncEngine:
     def fingerprint(self) -> str:
         return _fp_of(self.pubkey_hex)
 
+    def unpair(self, peer_id: str) -> bool:
+        """Forget a paired device (drops trust + any live discovery entry)."""
+        removed = self.trusted.pop(peer_id, None) is not None
+        self._peers_online.pop(peer_id, None)
+        if removed:
+            self._save_peers()
+        return removed
+
     def _adopt_peer_id(self, fp: str, new_id: str) -> Optional[dict]:
         """Reconcile a trusted peer onto its current ``device_id``.
 

@@ -16,7 +16,9 @@ try:
     import objc
     from AppKit import (
         NSApp, NSButton, NSButtonTypeSwitch, NSBezelStyleRounded, NSColor,
-        NSMakeRect, NSPopUpButton, NSTextField, NSView, NSWindow,
+        NSImage, NSImageScaleProportionallyUpOrDown, NSImageView,
+        NSMakeRect, NSMakeSize, NSPopover, NSPopUpButton, NSTextField,
+        NSTrackingArea, NSView, NSViewController, NSWindow,
         NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable,
         NSWindowStyleMaskTitled, NSBackingStoreBuffered, NSFont,
     )
@@ -25,6 +27,7 @@ try:
 except Exception:  # pragma: no cover
     _HAVE_APPKIT = False
     NSObject = object
+    NSView = object
 
 
 def _label(text, x, y, w, h, bold=False, size=13):
@@ -48,6 +51,94 @@ def _button(title, x, y, w, h, target, action):
     return b
 
 
+class HelpMarker(NSView):
+    """A '?' in a circle that pops a small explanatory bubble on hover.
+
+    Tooltips render unreliably (empty) in this background/agent app, so we use
+    an NSPopover driven by a tracking area instead — same hover UX, full
+    control over the content."""
+
+    def initWithText_frame_(self, text, frame):
+        self = objc.super(HelpMarker, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._text = text
+        self._popover = None
+        iv = NSImageView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, frame.size.width, frame.size.height))
+        try:
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "questionmark.circle", "Help")
+            if img is not None:
+                img.setTemplate_(True)
+                iv.setImage_(img)
+                iv.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+                iv.setContentTintColor_(NSColor.secondaryLabelColor())
+        except Exception:
+            pass
+        self.addSubview_(iv)
+        return self
+
+    def updateTrackingAreas(self):
+        objc.super(HelpMarker, self).updateTrackingAreas()
+        for ta in list(self.trackingAreas()):
+            self.removeTrackingArea_(ta)
+        opts = 0x01 | 0x80    # NSTrackingMouseEnteredAndExited | ActiveAlways
+        self.addTrackingArea_(NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+            self.bounds(), opts, self, None))
+
+    def mouseEntered_(self, _ev):
+        if self._popover is not None:
+            return
+        pad, w = 12.0, 300.0
+        tf = NSTextField.wrappingLabelWithString_(self._text)
+        tf.setFont_(NSFont.systemFontOfSize_(12))
+        tf.setPreferredMaxLayoutWidth_(w - 2 * pad)
+        h = tf.fittingSize().height
+        tf.setFrame_(NSMakeRect(pad, pad, w - 2 * pad, h))
+        content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h + 2 * pad))
+        content.addSubview_(tf)
+        vc = NSViewController.alloc().init()
+        vc.setView_(content)
+        pop = NSPopover.alloc().init()
+        pop.setContentViewController_(vc)
+        pop.setContentSize_(NSMakeSize(w, h + 2 * pad))
+        pop.setBehavior_(0)            # ApplicationDefined — we close it on exit,
+                                       # so a click elsewhere won't dismiss it
+        pop.showRelativeToRect_ofView_preferredEdge_(self.bounds(), self, 1)  # below
+        self._popover = pop
+
+    def mouseExited_(self, _ev):
+        if self._popover is not None:
+            self._popover.close()
+            self._popover = None
+
+
+def _help_marker(tip, x, y, sz=15):
+    """A '?'-in-a-circle hover marker (see HelpMarker)."""
+    return HelpMarker.alloc().initWithText_frame_(tip, NSMakeRect(x, y, sz, sz))
+
+
+def _alert_icon(symbol, color=None):
+    """A themed SF-Symbol icon for an NSAlert — replaces the generic app/Python
+    icon AND fills NSAlert's reserved icon slot (so it isn't an empty void)."""
+    try:
+        from AppKit import NSImageSymbolConfiguration
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol, None)
+        if img is None:
+            return None
+        cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(40.0, 0.0)
+        if color is not None:
+            try:
+                ccfg = NSImageSymbolConfiguration.configurationWithHierarchicalColor_(color)
+                cfg = cfg.configurationByApplyingConfiguration_(ccfg)
+            except Exception:
+                pass
+        return img.imageByApplyingSymbolConfiguration_(cfg) or img
+    except Exception:
+        return None
+
+
 def _checkbox(title, x, y, w, h, on, target, action):
     c = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
     c.setButtonType_(NSButtonTypeSwitch)
@@ -58,6 +149,11 @@ def _checkbox(title, x, y, w, h, on, target, action):
     return c
 
 
+# Keep created controllers (and their windows) alive — without a strong ref the
+# NSWindow can be released, leaving a dangling self.window that crashes on show().
+_ALIVE = []
+
+
 class SettingsController(NSObject):
     # Created via SettingsController.alloc().initWithEngine_(engine)
     def initWithEngine_(self, engine):
@@ -66,6 +162,7 @@ class SettingsController(NSObject):
             return None
         self.engine = engine
         self._build()
+        _ALIVE.append(self)
         return self
 
     def _build(self):
@@ -74,15 +171,25 @@ class SettingsController(NSObject):
                  | NSWindowStyleMaskMiniaturizable)
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, W, H), style, NSBackingStoreBuffered, False)
+        win.setReleasedWhenClosed_(False)      # we keep the controller; don't free on close
+        win.setDelegate_(self)                 # close on click-away (windowDidResignKey_)
         win.setTitle_("Clippy Settings")
         win.center()
         view = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, W, H))
         win.setContentView_(view)
         self.window = win
 
-        y = H - 40
-        view.addSubview_(_label("Clippy", 20, y, 200, 22, bold=True, size=16))
-        view.addSubview_(_label(f"Version {updates.current_version()}", 20, y - 22, 300, 18, size=11))
+        y = H - 56
+        icon = self._app_icon_image()
+        if icon is not None:
+            iv = NSImageView.alloc().initWithFrame_(NSMakeRect(20, y, 44, 44))
+            iv.setImage_(icon)
+            iv.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+            view.addSubview_(iv)
+        tx = 76 if icon is not None else 20
+        view.addSubview_(_label("Clippy", tx, y + 22, 200, 22, bold=True, size=16))
+        view.addSubview_(_label(f"Version {updates.current_version()}", tx, y, 300, 18, size=11))
+        y = H - 40   # keep the rest of the layout exactly where it was
 
         y -= 64
         view.addSubview_(_button("Check for updates", 20, y, 180, 28,
@@ -97,7 +204,14 @@ class SettingsController(NSObject):
         view.addSubview_(self.auto_cb)
 
         y -= 44
-        view.addSubview_(_label("Device sync", 20, y, 200, 20, bold=True, size=13))
+        view.addSubview_(_label("Device sync", 20, y, 100, 20, bold=True, size=13))
+        view.addSubview_(_help_marker(
+            "Not needed between two Apple devices on the same Apple ID — macOS "
+            "Universal Clipboard (Continuity) already shares the clipboard.\n\n"
+            "Device sync is handy when the devices use different Apple IDs "
+            "(e.g. a work and a personal Mac), or between an Apple device and a "
+            "Linux PC — Clippy runs on both.",
+            106, y + 3))
         y -= 28
         view.addSubview_(_button("Show pairing code", 20, y, 180, 28,
                                  self, b"showCode:"))
@@ -106,14 +220,17 @@ class SettingsController(NSObject):
         self.code_field.setPlaceholderString_("Enter code")
         view.addSubview_(self.code_field)
         view.addSubview_(_button("Pair", 178, y - 2, 80, 28, self, b"pairNow:"))
-        y -= 30
-        self.pair_status = _label("", 20, y, 400, 18, size=11)
+        y -= 24
+        self.pair_status = _label("", 20, y, 400, 16, size=11)
         view.addSubview_(self.pair_status)
-        y -= 26
-        self.peers_label = _label("No paired devices yet.", 20, y, 400, 18, size=11)
-        view.addSubview_(self.peers_label)
+        # Paired-devices list (name + status dot + Unpair), rebuilt by refreshPeers.
+        peers_h = 56
+        y -= peers_h + 4
+        self.peers_box = NSView.alloc().initWithFrame_(
+            NSMakeRect(18, y, W - 36, peers_h))
+        view.addSubview_(self.peers_box)
 
-        y -= 50
+        y -= 30
         self.login_cb = _checkbox("Start Clippy at login", 20, y, 360, 20,
                                   bool(settings.get("start_at_login")),
                                   self, b"toggleLogin:")
@@ -168,10 +285,37 @@ class SettingsController(NSObject):
 
         self.refreshPeers()
 
+    def _app_icon_image(self):
+        """The Clippy logo: bundled PNG if present, else the app's own icon."""
+        try:
+            p = config.BUNDLED_ICON
+            if p.exists():
+                img = NSImage.alloc().initByReferencingFile_(str(p))
+                if img is not None and img.isValid():
+                    return img
+        except Exception:
+            pass
+        try:
+            return NSImage.imageNamed_("NSApplicationIcon")
+        except Exception:
+            return None
+
     def show(self):
-        self.window.makeKeyAndOrderFront_(None)
         try:
             NSApp().activateIgnoringOtherApps_(True)
+        except Exception:
+            pass
+        self.window.makeKeyAndOrderFront_(None)
+        self.window.orderFrontRegardless()
+
+    def windowDidResignKey_(self, note):
+        # Close when the user clicks AWAY from our app. An in-app NSAlert
+        # (Clear history, etc.) also resigns key, so only dismiss when the
+        # whole app is no longer active — otherwise our own confirms would
+        # close Settings out from under the dialog.
+        try:
+            if not NSApp().isActive():
+                self.window.orderOut_(None)
         except Exception:
             pass
 
@@ -187,12 +331,65 @@ class SettingsController(NSObject):
             peers = self.engine.status().get("peers", []) if self.engine else []
         except Exception:
             peers = []
+        box = self.peers_box
+        for v in list(box.subviews()):
+            v.removeFromSuperview()
+        bw = box.frame().size.width
+        bh = box.frame().size.height
         if not peers:
-            self.peers_label.setStringValue_("No paired devices yet.")
-        else:
-            self.peers_label.setStringValue_(
-                "Paired: " + ", ".join(
-                    ("● " if p["online"] else "○ ") + p["name"] for p in peers))
+            box.addSubview_(_label("No paired devices yet.", 2, bh / 2 - 9,
+                                   bw - 4, 18, size=11))
+            return
+        rowh, gap = 26.0, 2.0
+        for i, p in enumerate(peers[:2]):
+            ry = bh - (i + 1) * rowh - i * gap
+            dot = "● " if p["online"] else "○ "
+            lbl = _label(dot + p["name"], 2, ry + 3, bw - 96, 18, size=12)
+            lbl.sizeToFit()
+            box.addSubview_(lbl)
+            # Unpair sits immediately after the device name (not pinned far right).
+            bx = min(2 + lbl.frame().size.width + 10, bw - 88)
+            btn = _button("Unpair", bx, ry, 84, 26, self, b"unpairClicked:")
+            btn.setFont_(NSFont.systemFontOfSize_(11))
+            btn.setIdentifier_(str(p["id"]))
+            box.addSubview_(btn)
+
+    def unpairClicked_(self, sender):
+        from AppKit import NSAlert, NSImage, NSMakeSize
+        if not self.engine:
+            return
+        pid = str(sender.identifier() or "")
+        if not pid:
+            return
+        name = pid
+        try:
+            for p in self.engine.status().get("peers", []):
+                if str(p["id"]) == pid:
+                    name = p["name"]
+        except Exception:
+            pass
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_(f"Unpair “{name}”?")
+        alert.setInformativeText_(
+            "This Mac will stop syncing clipboard items with it. You can pair "
+            "again anytime with a new code.")
+        ic = _alert_icon("minus.circle", NSColor.systemRedColor())
+        if ic is not None:
+            alert.setIcon_(ic)
+        up = alert.addButtonWithTitle_("Unpair")
+        cancel = alert.addButtonWithTitle_("Cancel")
+        try:
+            up.setKeyEquivalent_("")
+            up.setHasDestructiveAction_(True)
+            cancel.setKeyEquivalent_("\r")
+        except Exception:
+            pass
+        if alert.runModal() == 1000:
+            try:
+                self.engine.unpair(pid)
+            except Exception:
+                pass
+            self.refreshPeers()
 
     # -- actions --------------------------------------------------------
     def checkUpdates_(self, sender):
@@ -271,13 +468,32 @@ class SettingsController(NSObject):
                 pass
 
     def clearHistory_(self, sender):
-        from AppKit import NSAlert
+        from AppKit import NSAlert, NSImage, NSMakeSize
         from . import storage
+        n = 0
+        try:
+            n = storage.count(pinned=False)
+        except Exception:
+            pass
         alert = NSAlert.alloc().init()
         alert.setMessageText_("Clear clipboard history?")
-        alert.setInformativeText_("Pinned clips and clips in tabs are kept.")
-        alert.addButtonWithTitle_("Clear")
-        alert.addButtonWithTitle_("Cancel")
-        if alert.runModal() == 1000:
+        alert.setInformativeText_(
+            (f"This removes {n} unpinned clip{'s' if n != 1 else ''}. "
+             if n else "")
+            + "Pinned clips and clips in tabs are kept. This can’t be undone.")
+        ic = _alert_icon("trash", NSColor.systemRedColor())   # not the Python icon
+        if ic is not None:
+            alert.setIcon_(ic)
+        clear_btn = alert.addButtonWithTitle_("Clear")
+        cancel_btn = alert.addButtonWithTitle_("Cancel")
+        # Make Cancel the safe default (Return), and style Clear as destructive
+        # so the data-wiping action isn't the highlighted blue button.
+        try:
+            clear_btn.setKeyEquivalent_("")
+            clear_btn.setHasDestructiveAction_(True)
+            cancel_btn.setKeyEquivalent_("\r")
+        except Exception:
+            pass
+        if alert.runModal() == 1000:          # 1000 == first button (Clear)
             storage.clear(include_pinned=False)
             self.clear_status.setStringValue_("History cleared.")
