@@ -10,15 +10,15 @@ from __future__ import annotations
 
 import threading
 
-from . import config, settings, updates
+from . import config, settings, sound, updates
 
 try:
     import objc
     from AppKit import (
         NSApp, NSButton, NSButtonTypeSwitch, NSBezelStyleRounded, NSColor,
-        NSMakeRect, NSTextField, NSView, NSWindow, NSWindowStyleMaskClosable,
-        NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled,
-        NSBackingStoreBuffered, NSFont,
+        NSMakeRect, NSPopUpButton, NSTextField, NSView, NSWindow,
+        NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable,
+        NSWindowStyleMaskTitled, NSBackingStoreBuffered, NSFont,
     )
     from Foundation import NSObject
     _HAVE_APPKIT = True
@@ -69,7 +69,7 @@ class SettingsController(NSObject):
         return self
 
     def _build(self):
-        W, H = 440, 430
+        W, H = 440, 524
         style = (NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                  | NSWindowStyleMaskMiniaturizable)
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -118,6 +118,31 @@ class SettingsController(NSObject):
                                   bool(settings.get("start_at_login")),
                                   self, b"toggleLogin:")
         view.addSubview_(self.login_cb)
+
+        # -- Sound -------------------------------------------------------
+        y -= 44
+        view.addSubview_(_label("Sound", 20, y, 200, 20, bold=True, size=13))
+        y -= 28
+        self.sound_cb = _checkbox("Play a sound on copy", 20, y, 360, 20,
+                                  bool(settings.get("sound_on_copy")),
+                                  self, b"toggleSound:")
+        view.addSubview_(self.sound_cb)
+        y -= 36
+        view.addSubview_(_label("Copy sound", 20, y + 2, 90, 20, size=12))
+        self._sound_ids = [sid for sid, _ in sound.SOUND_CHOICES]
+        self.sound_choice = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            NSMakeRect(110, y - 2, 160, 26), False)
+        for _sid, slabel in sound.SOUND_CHOICES:
+            self.sound_choice.addItemWithTitle_(slabel)
+        cur = settings.get("sound_choice")
+        if cur in self._sound_ids:
+            self.sound_choice.selectItemAtIndex_(self._sound_ids.index(cur))
+        elif sound.DEFAULT_SOUND in self._sound_ids:
+            self.sound_choice.selectItemAtIndex_(self._sound_ids.index(sound.DEFAULT_SOUND))
+        self.sound_choice.setTarget_(self)
+        self.sound_choice.setAction_(b"soundChoiceChanged:")
+        view.addSubview_(self.sound_choice)
+        view.addSubview_(_button("Preview", 280, y - 2, 90, 28, self, b"previewSound:"))
 
         self.refreshPeers()
 
@@ -197,3 +222,18 @@ class SettingsController(NSObject):
         on = bool(self.login_cb.state())
         settings.set_value("start_at_login", on)
         set_login_item(on)
+
+    def toggleSound_(self, sender):
+        settings.set_value("sound_on_copy", bool(self.sound_cb.state()))
+
+    def _selected_sound(self):
+        i = self.sound_choice.indexOfSelectedItem()
+        return self._sound_ids[i] if 0 <= i < len(self._sound_ids) else None
+
+    def soundChoiceChanged_(self, sender):
+        sid = self._selected_sound()
+        if sid:
+            settings.set_value("sound_choice", sid)
+
+    def previewSound_(self, sender):
+        sound.play(self._selected_sound())
