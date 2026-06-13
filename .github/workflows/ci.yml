@@ -1,0 +1,34 @@
+name: CI
+
+# Fast checks on every PR (and pushes to main): byte-compile all sources and
+# run the in-process sync self-tests. No GTK / clipboard tools needed — the
+# self-tests monkeypatch the clipboard backend.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install runtime deps
+        run: pip install --quiet pynacl zeroconf
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q clippy scripts
+
+      - name: Sync core self-test
+        run: PYTHONPATH=. python scripts/sync_selftest.py
+
+      - name: Device-id drift self-test
+        run: PYTHONPATH=. python scripts/sync_drift_test.py
