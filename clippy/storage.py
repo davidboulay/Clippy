@@ -265,6 +265,14 @@ def get(entry_id: int) -> Optional[Entry]:
     return _row_to_entry(row) if row else None
 
 
+def touch(entry_id: int) -> None:
+    """Bump an entry's created_at to now (move it to the front of history) —
+    used when an old clip is recovered from the panel."""
+    with _connect() as conn:
+        conn.execute("UPDATE entries SET created_at=? WHERE id=?",
+                     (time.time(), entry_id))
+
+
 def delete(entry_id: int) -> None:
     with _connect() as conn:
         row = conn.execute(

@@ -22,7 +22,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 from . import config
 
 _RATE = 44_100
-_PLAYERS = ("pw-play", "paplay", "aplay")
+# Linux players first; "afplay" is the built-in macOS player (same [player, path]
+# invocation). shutil.which picks whichever exists, so this stays platform-safe.
+_PLAYERS = ("pw-play", "paplay", "aplay", "afplay")
 
 DEFAULT_SOUND = "tap"
 
