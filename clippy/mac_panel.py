@@ -169,12 +169,21 @@ def _meta_text(entry) -> str:
     return f"{when}  ·  {len(text)} chars"
 
 
-def _action_button(title, size=13):
-    """A small borderless text button for a tile (pin / delete)."""
+def _action_button(title, size=13, color=None):
+    """A small borderless text button for a tile (pin / delete). With a color,
+    the title is drawn in that color (so it reads on a colored header band)."""
     b = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, 20, 20))
-    b.setTitle_(title)
     b.setBordered_(False)
-    b.setFont_(NSFont.systemFontOfSize_(size))
+    if color is not None:
+        from AppKit import NSFontAttributeName, NSForegroundColorAttributeName
+        from Foundation import NSAttributedString
+        attrs = {NSForegroundColorAttributeName: color,
+                 NSFontAttributeName: NSFont.systemFontOfSize_(size)}
+        b.setAttributedTitle_(
+            NSAttributedString.alloc().initWithString_attributes_(title, attrs))
+    else:
+        b.setTitle_(title)
+        b.setFont_(NSFont.systemFontOfSize_(size))
     return b
 
 
@@ -338,29 +347,35 @@ def _make_tile(entry):
     tile = TileView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
     tile.setWantsLayer_(True)
     tile.layer().setCornerRadius_(10.0)
+    tile.layer().setMasksToBounds_(True)   # clip the header band to rounded corners
     tile.layer().setBackgroundColor_(
         NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.85).CGColor())
 
-    # header: type badge (+ rich badge), pin marker
+    # Colored header band — color + label vary by file type.
     badge_txt, badge_col = _category(entry)
-    badge = _label(badge_txt, 9, badge_col, bold=True)
-    badge.setFrame_(NSMakeRect(_TILE_PAD, h - _TILE_PAD - 16, 70, 14))
-    tile.addSubview_(badge)
-    if entry.has_formatting:
-        rich = _label("RICH", 9, NSColor.systemPurpleColor(), bold=True)
-        rich.setFrame_(NSMakeRect(_TILE_PAD + 50, h - _TILE_PAD - 16, 40, 14))
-        tile.addSubview_(rich)
-    # delete + pin buttons (top-right); target/action wired in reload()
-    del_btn = _action_button("✕", 12)
-    del_btn.setFrame_(NSMakeRect(w - _TILE_PAD - 20, h - _TILE_PAD - 20, 20, 20))
+    white = NSColor.whiteColor()
+    bh = 26.0
+    band = NSView.alloc().initWithFrame_(NSMakeRect(0, h - bh, w, bh))
+    band.setWantsLayer_(True)
+    band.layer().setBackgroundColor_(badge_col.CGColor())
+    tile.addSubview_(band)
+
+    title = badge_txt + ("  ·  RICH" if entry.has_formatting else "")
+    lbl = _label(title, 11, white, bold=True)
+    lbl.setFrame_(NSMakeRect(10, (bh - 16) / 2, w - 92, 16))
+    band.addSubview_(lbl)
+
+    # delete + pin on the band (white); target/action wired in reload()
+    del_btn = _action_button("✕", 13, white)
+    del_btn.setFrame_(NSMakeRect(w - 26, (bh - 20) / 2, 20, 20))
     del_btn.setTag_(entry.id)
-    tile.addSubview_(del_btn)
+    band.addSubview_(del_btn)
     tile._del_btn = del_btn
 
-    pin_btn = _action_button("★" if entry.pinned else "☆", 14)
-    pin_btn.setFrame_(NSMakeRect(w - _TILE_PAD - 42, h - _TILE_PAD - 20, 20, 20))
+    pin_btn = _action_button("★" if entry.pinned else "☆", 14, white)
+    pin_btn.setFrame_(NSMakeRect(w - 48, (bh - 20) / 2, 20, 20))
     pin_btn.setTag_(entry.id)
-    tile.addSubview_(pin_btn)
+    band.addSubview_(pin_btn)
     tile._pin_btn = pin_btn
 
     # footer: relative time + size/chars
@@ -368,9 +383,9 @@ def _make_tile(entry):
     footer.setFrame_(NSMakeRect(_TILE_PAD, _TILE_PAD, w - 2 * _TILE_PAD, 14))
     tile.addSubview_(footer)
 
-    # content preview
+    # content preview — fills between the footer and the header band
     crect = NSMakeRect(_TILE_PAD, _TILE_PAD + 18,
-                       w - 2 * _TILE_PAD, float(config.TILE_CONTENT_HEIGHT))
+                       w - 2 * _TILE_PAD, h - bh - 22 - _TILE_PAD)
     tile.addSubview_(_build_preview(entry, crect))
     return tile
 
