@@ -390,6 +390,14 @@ def _label(text, size, color, align=_NS_LEFT, bold=False):
     return lbl
 
 
+def _hide_alert_icon(alert):
+    """Hide the app icon on an NSAlert (we don't want the Python/app icon)."""
+    try:
+        alert.setIcon_(NSImage.alloc().initWithSize_(NSMakeSize(1, 1)))
+    except Exception:
+        pass
+
+
 def _confirm(message, info):
     """Modal OK/Cancel confirmation. Returns True on OK."""
     from AppKit import NSAlert
@@ -397,6 +405,7 @@ def _confirm(message, info):
     alert.setMessageText_(message)
     if info:
         alert.setInformativeText_(info)
+    _hide_alert_icon(alert)
     alert.addButtonWithTitle_("OK")
     alert.addButtonWithTitle_("Cancel")
     return alert.runModal() == 1000
@@ -407,6 +416,7 @@ def _text_dialog(title, default):
     from AppKit import NSAlert
     alert = NSAlert.alloc().init()
     alert.setMessageText_(title)
+    _hide_alert_icon(alert)
     alert.addButtonWithTitle_("OK")
     alert.addButtonWithTitle_("Cancel")
     tf = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 240, 22))
@@ -1166,7 +1176,7 @@ class PanelController(NSObject):
         from AppKit import NSAlert
         alert = NSAlert.alloc().init()
         alert.setMessageText_("New tab")
-        alert.setInformativeText_("Name and color:")
+        _hide_alert_icon(alert)
         alert.addButtonWithTitle_("Create")
         alert.addButtonWithTitle_("Cancel")
         w, h = 300.0, 72.0
