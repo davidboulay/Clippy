@@ -56,7 +56,8 @@ from AppKit import (
 )
 from Foundation import NSMakePoint, NSMakeRect, NSMakeSize, NSObject
 
-from . import clipboard, config, mac_source, mac_tabs, settings, sound, storage
+from . import (clip_types, clipboard, config, mac_source, mac_tabs, settings,
+               sound, storage)
 
 # Carbon hot-key event constants.
 _kEventClassKeyboard = 0x6B657962      # 'keyb'
@@ -130,83 +131,58 @@ def _color_from_hex(hexstr, alpha=1.0):
     except Exception:
         return NSColor.systemGrayColor()
 
-_IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
-               "heic", "heif", "avif", "ico", "svg"}
-_VIDEO_EXTS = {"mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg"}
-_AUDIO_EXTS = {"mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "aiff", "aif", "opus"}
-_ARCHIVE_EXTS = {"zip", "tar", "gz", "tgz", "bz2", "tbz", "7z", "rar", "xz", "zst", "dmg"}
-_SHEET_EXTS = {"csv", "tsv", "xls", "xlsx", "xlsm", "xlsb", "ods", "numbers"}
-_SHEET_MIMES = ("text/csv", "text/tab-separated-values",
-                "application/vnd.ms-excel",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml",
-                "application/vnd.oasis.opendocument.spreadsheet")
+# Classification (which bucket / what label / freedesktop icon) lives in the
+# shared clip_types module so the Mac and GTK panels never diverge. The ext/mime
+# sets are aliased here under their original names for the thumbnail-detection
+# call sites below; macOS maps the shared bucket keys to its own SF Symbols and
+# NSColors locally (rendering only).
+_IMAGE_EXTS = clip_types.IMAGE_EXTS
+_VIDEO_EXTS = clip_types.VIDEO_EXTS
+_AUDIO_EXTS = clip_types.AUDIO_EXTS
+_ARCHIVE_EXTS = clip_types.ARCHIVE_EXTS
+_SHEET_EXTS = clip_types.SHEET_EXTS
+_SHEET_MIMES = clip_types.SHEET_MIMES
+
+_entry_type_key = clip_types.type_key
+
+
+def _key_color(key):
+    return {
+        "text": _color_from_hex("#1E40AF"),       # deep blue
+        "image": NSColor.systemTealColor(),
+        "video": NSColor.systemPinkColor(),
+        "audio": NSColor.systemPurpleColor(),
+        "pdf": NSColor.systemRedColor(),
+        "sheet": NSColor.systemGreenColor(),
+        "archive": NSColor.systemBrownColor(),
+        "file": NSColor.systemOrangeColor(),
+    }.get(key, NSColor.systemOrangeColor())
+
+
+# Bucket key -> SF Symbol (the macOS-local rendering of clip_types' icons).
+_KEY_SYMBOL = {
+    "text": "text.alignleft",
+    "image": "photo",
+    "video": "film",
+    "audio": "music.note",
+    "pdf": "doc.richtext",
+    "sheet": "tablecells",
+    "archive": "archivebox",
+    "file": "doc",
+}
 
 
 def _category(entry):
-    """(label, color, SF-symbol name) for a history entry — granular for files."""
-    if entry.kind == "text":
-        m = (entry.mime or "").lower()
-        if "csv" in m or "tab-separated" in m:
-            return "CSV", NSColor.systemGreenColor(), "tablecells"
-        return "TEXT", _color_from_hex("#1E40AF"), "text.alignleft"   # deep blue
-    if entry.is_image:                       # image DATA (Copy Image)
-        return "IMAGE", NSColor.systemTealColor(), "photo"
-    mime = (entry.mime or "").lower()
-    ext = _ext(entry.filename or entry.text or "")
-    if mime.startswith("image/") or ext in _IMAGE_EXTS:
-        return "IMAGE", NSColor.systemTealColor(), "photo"
-    if mime.startswith("video/") or ext in _VIDEO_EXTS:
-        return "VIDEO", NSColor.systemPinkColor(), "film"
-    if mime.startswith("audio/") or ext in _AUDIO_EXTS:
-        return "AUDIO", NSColor.systemPurpleColor(), "music.note"
-    if mime == "application/pdf" or ext == "pdf":
-        return "PDF", NSColor.systemRedColor(), "doc.richtext"
-    if ext in _SHEET_EXTS or any(m in mime for m in _SHEET_MIMES):
-        label = "EXCEL" if ext.startswith("xls") else (ext.upper()[:6] or "SHEET")
-        return label, NSColor.systemGreenColor(), "tablecells"
-    if ext in _ARCHIVE_EXTS:
-        return "ZIP", NSColor.systemBrownColor(), "archivebox"
-    if ext:
-        return ext.upper()[:6], NSColor.systemOrangeColor(), "doc"
-    return "FILE", NSColor.systemOrangeColor(), "doc"
+    """(label, NSColor, SF-symbol name) for a history entry — granular for
+    files. Label/bucket come from the shared classifier; colour + symbol are
+    the macOS-local rendering of the bucket."""
+    label, key, _icon = clip_types.category(entry)
+    return label, _key_color(key), _KEY_SYMBOL[key]
 
 
-# Coarse type buckets for the type filter (key -> menu label + SF symbol). The
-# key is what _entry_type_key() returns; order is the menu order.
-_TYPE_FILTERS = [
-    ("text", "Text", "text.alignleft"),
-    ("image", "Image", "photo"),
-    ("video", "Video", "film"),
-    ("audio", "Audio", "music.note"),
-    ("pdf", "PDF", "doc.richtext"),
-    ("sheet", "Spreadsheet", "tablecells"),
-    ("archive", "Archive", "archivebox"),
-    ("file", "Other files", "doc"),
-]
-
-
-def _entry_type_key(entry):
-    """Coarse bucket key for an entry — mirrors _category, for filtering."""
-    if entry.kind == "text":
-        m = (entry.mime or "").lower()
-        return "sheet" if ("csv" in m or "tab-separated" in m) else "text"
-    if entry.is_image:
-        return "image"
-    mime = (entry.mime or "").lower()
-    ext = _ext(entry.filename or entry.text or "")
-    if mime.startswith("image/") or ext in _IMAGE_EXTS:
-        return "image"
-    if mime.startswith("video/") or ext in _VIDEO_EXTS:
-        return "video"
-    if mime.startswith("audio/") or ext in _AUDIO_EXTS:
-        return "audio"
-    if mime == "application/pdf" or ext == "pdf":
-        return "pdf"
-    if ext in _SHEET_EXTS or any(m in mime for m in _SHEET_MIMES):
-        return "sheet"
-    if ext in _ARCHIVE_EXTS:
-        return "archive"
-    return "file"
+# Type filter menu: keys/labels/order from the shared classifier, SF symbols
+# mapped locally (key -> menu label + SF symbol).
+_TYPE_FILTERS = [(k, lbl, _KEY_SYMBOL[k]) for k, lbl, _icon in clip_types.TYPE_FILTERS]
 
 
 _app_icon_cache = {}
@@ -257,9 +233,7 @@ def _relative_time(ts: float) -> str:
     return f"{delta // 86400} d ago"
 
 
-def _ext(name: str) -> str:
-    import os
-    return os.path.splitext(name or "")[1].lstrip(".").lower()
+_ext = clip_types.ext
 
 
 def _meta_text(entry) -> str:

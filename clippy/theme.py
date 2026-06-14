@@ -224,8 +224,16 @@ def build_css(dark: bool | None = None) -> str:
 .preview-image {{ border-radius: 8px; }}
 
 .badge {{ font-size: 9.5px; font-weight: bold; border-radius: 6px; padding: 1px 6px; }}
-.badge-text {{ color: {c['badge_text_fg']}; background-color: {c['badge_text_bg']}; }}
-.badge-image {{ color: {c['badge_img_fg']}; background-color: {c['badge_img_bg']}; }}
+/* Per-type colors mirror the macOS palette; mid-tones stay legible on both
+   the dark and light tile backgrounds. */
+.badge-text {{ color: #3b6fe8; background-color: rgba(59, 111, 232, 0.18); }}
+.badge-image {{ color: #16a0a0; background-color: rgba(22, 160, 160, 0.18); }}
+.badge-video {{ color: #e84b7c; background-color: rgba(232, 75, 124, 0.18); }}
+.badge-audio {{ color: #a065c0; background-color: rgba(155, 89, 182, 0.20); }}
+.badge-pdf {{ color: #e0524b; background-color: rgba(224, 82, 75, 0.18); }}
+.badge-sheet {{ color: #2bb673; background-color: rgba(43, 182, 115, 0.18); }}
+.badge-archive {{ color: #b07b3b; background-color: rgba(176, 123, 59, 0.20); }}
+.badge-file {{ color: #e8843b; background-color: rgba(232, 132, 59, 0.18); }}
 .pin-marker {{ color: #ffd24a; font-size: 11px; margin-left: 2px; }}
 
 .tile-action {{
