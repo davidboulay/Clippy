@@ -166,6 +166,15 @@ def build_css(dark: bool | None = None) -> str:
     color: {c['dim']};
 }}
 .iconbtn:hover {{ background-color: {c['tile_hover']}; color: {c['text']}; }}
+.iconbtn.active {{ background-color: {c['accent_soft']}; color: {c['text']}; }}
+
+/* Type-filter popover rows: flat menu items with a hover highlight. */
+.filter-row {{
+    background: transparent; border: none; box-shadow: none;
+    border-radius: 6px; padding: 4px 8px; min-height: 26px;
+    color: {c['text']};
+}}
+.filter-row:hover {{ background-color: {c['tile_hover']}; }}
 
 .search {{
     background-color: {c['field']};
