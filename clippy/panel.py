@@ -16,7 +16,7 @@ gi.require_version("GtkLayerShell", "0.1")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, GtkLayerShell, Pango  # noqa: E402
 
-from . import clipboard, config, settings, storage
+from . import clip_types, clipboard, config, settings, storage
 from .storage import Entry
 
 # Opening cost scales with the number of tiles built (each image tile decodes a
@@ -63,13 +63,14 @@ class Tile(Gtk.EventBox):
         self.add(card)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        badge = Gtk.Label(label="IMAGE" if entry.is_image
-                          else ("FILE" if entry.is_file else "TEXT"))
-        badge.get_style_context().add_class("badge")
-        badge.get_style_context().add_class(
-            "badge-image" if entry.is_image else "badge-text"
-        )
-        header.pack_start(badge, False, False, 0)
+        label, key, icon_name = clip_types.category(entry)
+        badge_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
+        badge_box.get_style_context().add_class("badge")
+        badge_box.get_style_context().add_class(f"badge-{key}")
+        icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+        badge_box.pack_start(icon, False, False, 0)
+        badge_box.pack_start(Gtk.Label(label=label), False, False, 0)
+        header.pack_start(badge_box, False, False, 0)
 
         if entry.has_formatting:
             rich = Gtk.Label(label="rich")
@@ -108,9 +109,8 @@ class Tile(Gtk.EventBox):
         self.set_size_request(config.TILE_WIDTH, config.TILE_HEIGHT)
         self.connect("button-press-event", self._on_click)
 
-    _IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif",
-                   "heic", "heif", "avif", "ico", "svg"}
-    _VIDEO_EXTS = {"mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "flv", "mpg", "mpeg"}
+    _IMAGE_EXTS = clip_types.IMAGE_EXTS
+    _VIDEO_EXTS = clip_types.VIDEO_EXTS
 
     def _build_content(self, entry: Entry) -> Gtk.Widget:
         inner = self._render_preview(entry)
@@ -157,10 +157,7 @@ class Tile(Gtk.EventBox):
         image.get_style_context().add_class("preview-image")
         return image
 
-    @staticmethod
-    def _ext(name: str) -> str:
-        import os
-        return os.path.splitext(name or "")[1].lstrip(".").lower()
+    _ext = staticmethod(clip_types.ext)
 
     def _render_preview(self, entry: Entry) -> Optional[Gtk.Widget]:
         """A thumbnail for image/video entries, or a file card for other files."""
