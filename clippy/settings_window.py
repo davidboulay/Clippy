@@ -153,7 +153,10 @@ class SettingsWindow:
         body.pack_start(size_row, False, False, 0)
 
         self._sync_status_lbl = note("")
-        self._sync_peers_lbl = note("")
+        # Per-device list: one row each (name + online dot + Unpair button),
+        # rebuilt by _refresh_peers().
+        self._peers_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        body.pack_start(self._peers_box, False, False, 0)
         self._refresh_peers()
 
     def _on_sync_size(self, combo):
@@ -198,15 +201,56 @@ class SettingsWindow:
 
     def _refresh_peers(self):
         engine = getattr(self._controller, "sync", None)
-        if engine is None or not hasattr(self, "_sync_peers_lbl"):
+        if engine is None or not hasattr(self, "_peers_box"):
             return
+        for child in self._peers_box.get_children():
+            self._peers_box.remove(child)
         peers = engine.status().get("peers", [])
         if not peers:
-            self._sync_peers_lbl.set_text("No paired devices yet.")
+            empty = Gtk.Label(label="No paired devices yet.")
+            empty.set_xalign(0.0)
+            empty.get_style_context().add_class("settings-desc")
+            self._peers_box.pack_start(empty, False, False, 0)
         else:
-            self._sync_peers_lbl.set_text(
-                "Paired: " + ", ".join(
-                    f"{'●' if p['online'] else '○'} {p['name']}" for p in peers))
+            for p in peers:
+                self._peers_box.pack_start(self._peer_row(engine, p), False, False, 0)
+        self._peers_box.show_all()
+
+    def _peer_row(self, engine, peer):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        dot = Gtk.Label(label="●" if peer["online"] else "○")
+        dot.set_tooltip_text("Online" if peer["online"] else "Offline")
+        row.pack_start(dot, False, False, 0)
+        name = Gtk.Label(label=peer["name"])
+        name.set_xalign(0.0)
+        name.get_style_context().add_class("settings-label")
+        row.pack_start(name, True, True, 0)
+        unpair = Gtk.Button(label="Unpair")
+        unpair.get_style_context().add_class("danger")
+        unpair.connect("clicked", self._on_unpair, peer)
+        row.pack_end(unpair, False, False, 0)
+        return row
+
+    def _on_unpair(self, _btn, peer):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Unpair “{peer['name']}”?",
+        )
+        dialog.format_secondary_text(
+            "This device will stop syncing with it until you pair again.")
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        unpair_btn = dialog.add_button("Unpair", Gtk.ResponseType.OK)
+        unpair_btn.get_style_context().add_class("destructive-action")
+        resp = dialog.run()
+        dialog.destroy()
+        if resp == Gtk.ResponseType.OK:
+            engine = getattr(self._controller, "sync", None)
+            if engine is not None:
+                engine.unpair(peer["id"])
+            self._refresh_peers()
 
     def _build(self):
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
