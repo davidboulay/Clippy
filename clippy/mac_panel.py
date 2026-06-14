@@ -56,8 +56,8 @@ from AppKit import (
 )
 from Foundation import NSMakePoint, NSMakeRect, NSMakeSize, NSObject
 
-from . import (clip_types, clipboard, config, mac_source, mac_tabs, settings,
-               sound, storage)
+from . import clip_types, clipboard, config, mac_source, settings, sound, storage
+from . import tabs as mac_tabs   # the shared custom-tabs store (was mac_tabs)
 
 # Carbon hot-key event constants.
 _kEventClassKeyboard = 0x6B657962      # 'keyb'

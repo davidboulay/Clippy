@@ -16,7 +16,7 @@ gi.require_version("GtkLayerShell", "0.1")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, GtkLayerShell, Pango  # noqa: E402
 
-from . import clip_types, clipboard, config, settings, storage
+from . import clip_types, clipboard, config, settings, storage, tabs
 from .storage import Entry
 
 # Opening cost scales with the number of tiles built (each image tile decodes a
@@ -92,8 +92,9 @@ class Tile(Gtk.EventBox):
 
         pin_btn = Gtk.Button(label="★" if entry.pinned else "☆")
         pin_btn.get_style_context().add_class("tile-action")
-        pin_btn.set_tooltip_text("Pin / unpin")
-        pin_btn.connect("clicked", lambda _b: self._panel.pin_entry(self.entry.id))
+        pin_btn.set_tooltip_text("Pin / add to tab")
+        pin_btn.connect(
+            "clicked", lambda b: self._panel.pin_entry(self.entry.id, b))
         header.pack_end(pin_btn, False, False, 0)
 
         card.pack_start(header, False, False, 0)
@@ -271,7 +272,7 @@ class Panel:
         self._selected = -1
         self._visible = False
         self._shown_at = 0.0
-        self._tab = "history"  # "history" (unpinned) | "pinned"
+        self._tab = "recent"  # "recent" (unpinned) | "pinned" | <custom tab name>
         self._switching_tab = False
         self._type_filter = None  # None = all types; else a clip_types bucket key
         # Per-tab render cache: switching tabs reuses already-built tiles
@@ -336,16 +337,9 @@ class Panel:
         title.get_style_context().add_class("title")
         header.pack_start(title, False, False, 0)
 
-        self.tab_history = Gtk.ToggleButton(label="History")
-        self.tab_history.get_style_context().add_class("tab")
-        self.tab_history.set_active(True)
-        self.tab_history.connect("toggled", self._on_tab, "history")
-        header.pack_start(self.tab_history, False, False, 0)
-
-        self.tab_pinned = Gtk.ToggleButton(label="★ Pinned")
-        self.tab_pinned.get_style_context().add_class("tab")
-        self.tab_pinned.connect("toggled", self._on_tab, "pinned")
-        header.pack_start(self.tab_pinned, False, False, 0)
+        self.tabbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        header.pack_start(self.tabbar, False, False, 0)
+        self._build_tabbar()
 
         self.search = Gtk.SearchEntry()
         self.search.set_placeholder_text("Search clipboard history…")
@@ -430,6 +424,186 @@ class Panel:
             pop.popdown()
         self.reload()
 
+    # -- tab bar ----------------------------------------------------------
+    def _build_tabbar(self) -> None:
+        """(Re)build the tab row: Recent, Pinned, each custom tab, then +."""
+        for child in self.tabbar.get_children():
+            self.tabbar.remove(child)
+        rows = [("recent", "Recent", None), ("pinned", "★ Pinned", None)]
+        for t in tabs.tabs():
+            rows.append((t["name"], t["name"], t.get("color")))
+        for tab_id, label, color in rows:
+            btn = Gtk.ToggleButton()
+            btn.get_style_context().add_class("tab")
+            btn.set_active(self._tab == tab_id)
+            lbl = Gtk.Label()
+            if color:
+                lbl.set_markup(
+                    f'<span foreground="{GLib.markup_escape_text(color)}">●</span> '
+                    f'{GLib.markup_escape_text(label)}')
+            else:
+                lbl.set_text(label)
+            btn.add(lbl)
+            btn.connect("clicked", self._on_tab_clicked, tab_id)
+            if tab_id not in ("recent", "pinned"):
+                btn.set_tooltip_text("Right-click to rename, recolor or delete")
+                btn.connect("button-press-event", self._on_tab_press, tab_id)
+            self.tabbar.pack_start(btn, False, False, 0)
+        plus = Gtk.Button(label="+")
+        plus.get_style_context().add_class("tab")
+        plus.set_tooltip_text("New tab")
+        plus.connect("clicked", self._on_create_tab)
+        self.tabbar.pack_start(plus, False, False, 0)
+        self.tabbar.show_all()
+
+    def _on_tab_clicked(self, _btn, tab_id: str) -> None:
+        if self._switching_tab:
+            return
+        if tab_id == self._tab:
+            # Clicking the active tab toggled it off visually; re-assert state.
+            self._build_tabbar()
+            return
+        self._select_tab(tab_id)
+
+    def _on_tab_press(self, btn, event, tab_id: str) -> bool:
+        if event.button == 3:  # right-click → management popover
+            self._show_tab_mgmt(btn, tab_id)
+            return True
+        return False
+
+    def _show_tab_mgmt(self, anchor, name: str) -> None:
+        pop = Gtk.Popover()
+        pop.set_relative_to(anchor)
+        pop.get_style_context().add_class("filter-popover")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for setter in (box.set_margin_top, box.set_margin_bottom,
+                       box.set_margin_start, box.set_margin_end):
+            setter(8)
+
+        rename_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        entry = Gtk.Entry()
+        entry.set_text(name)
+        entry.connect("activate", lambda _e: self._do_rename(pop, name, entry.get_text()))
+        rename_row.pack_start(entry, True, True, 0)
+        rn = Gtk.Button(label="Rename")
+        rn.connect("clicked", lambda _b: self._do_rename(pop, name, entry.get_text()))
+        rename_row.pack_start(rn, False, False, 0)
+        box.pack_start(rename_row, False, False, 0)
+
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        for hexc in tabs.PALETTE:
+            swatches.pack_start(
+                self._swatch(hexc, lambda c=hexc: self._do_recolor(pop, name, c)),
+                False, False, 0)
+        box.pack_start(swatches, False, False, 0)
+
+        armed = {"v": False}
+        delete = Gtk.Button(label=f"Delete “{name}”")
+        delete.get_style_context().add_class("danger")
+
+        def on_delete(_b):
+            if not armed["v"]:
+                armed["v"] = True
+                delete.set_label("Click again to confirm")
+                return
+            self._do_delete(pop, name)
+        delete.connect("clicked", on_delete)
+        box.pack_start(delete, False, False, 0)
+
+        pop.add(box)
+        box.show_all()
+        pop.popup()
+
+    def _swatch(self, hexc: str, on_click) -> Gtk.Widget:
+        btn = Gtk.Button()
+        btn.set_tooltip_text(hexc)
+        dot = Gtk.Label()
+        dot.set_markup(
+            f'<span foreground="{GLib.markup_escape_text(hexc)}" size="x-large">●</span>')
+        btn.add(dot)
+        btn.get_style_context().add_class("filter-row")
+        btn.connect("clicked", lambda _b: on_click())
+        return btn
+
+    def _do_rename(self, pop, old: str, new: str) -> None:
+        new = (new or "").strip()
+        if new and tabs.rename_tab(old, new):
+            if self._tab == old:
+                self._tab = new
+            pop.popdown()
+            self._invalidate_cache()
+            self._build_tabbar()
+            self.reload()
+
+    def _do_recolor(self, pop, name: str, color: str) -> None:
+        tabs.set_color(name, color)
+        pop.popdown()
+        self._build_tabbar()
+
+    def _do_delete(self, pop, name: str) -> None:
+        tabs.remove_tab(name)
+        if self._tab == name:
+            self._tab = "recent"
+        pop.popdown()
+        self._invalidate_cache()
+        self._build_tabbar()
+        self.reload()
+
+    def _on_create_tab(self, anchor) -> None:
+        pop = Gtk.Popover()
+        pop.set_relative_to(anchor)
+        pop.get_style_context().add_class("filter-popover")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for setter in (box.set_margin_top, box.set_margin_bottom,
+                       box.set_margin_start, box.set_margin_end):
+            setter(8)
+        title = Gtk.Label(label="New tab")
+        title.get_style_context().add_class("title")
+        title.set_xalign(0.0)
+        box.pack_start(title, False, False, 0)
+
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("Tab name")
+        box.pack_start(entry, False, False, 0)
+
+        chosen = {"color": tabs.PALETTE[0]}
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        marks = {}
+
+        def pick(c):
+            chosen["color"] = c
+            for hexc, lbl in marks.items():
+                lbl.set_visible(hexc == c)
+        for hexc in tabs.PALETTE:
+            cell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            cell.pack_start(self._swatch(hexc, lambda c=hexc: pick(c)), False, False, 0)
+            mark = Gtk.Label(label="✓")
+            mark.set_no_show_all(True)
+            marks[hexc] = mark
+            cell.pack_start(mark, False, False, 0)
+            swatches.pack_start(cell, False, False, 0)
+        box.pack_start(swatches, False, False, 0)
+        pick(tabs.PALETTE[0])
+
+        def create():
+            name = entry.get_text().strip()
+            if name and tabs.add_tab(name, chosen["color"]):
+                self._tab = name
+                pop.popdown()
+                self._invalidate_cache()
+                self._build_tabbar()
+                self.reload()
+        entry.connect("activate", lambda _e: create())
+        btn = Gtk.Button(label="Create")
+        btn.connect("clicked", lambda _b: create())
+        box.pack_start(btn, False, False, 0)
+
+        pop.add(box)
+        box.show_all()
+        pick(tabs.PALETTE[0])
+        pop.popup()
+        entry.grab_focus()
+
     def _init_layer_shell(self) -> None:
         win = self.window
         GtkLayerShell.init_for_window(win)
@@ -473,6 +647,42 @@ class Panel:
             pass
 
     # -- model / rendering ------------------------------------------------
+    def _entries_for_tab(self, query: str):
+        """(entries_capped, total) for the active tab + query + type filter.
+
+        Mirrors the macOS _entries_for_tab: Recent = unpinned; Pinned = pinned
+        clips NOT in any custom tab; a custom tab = its member ids (re-sorted
+        newest-first). The SQL has no type column, so the type filter is applied
+        in memory over an over-fetched pool.
+        """
+        tf = self._type_filter
+        if self._tab == "recent" and not tf:
+            ents = storage.list_entries(
+                query=query, limit=config.DISPLAY_LIMIT, pinned=False)
+            return ents, storage.count(pinned=False)
+
+        if self._tab == "recent":
+            ents = storage.list_entries(
+                query=query, limit=config.MAX_HISTORY, pinned=False)
+        elif self._tab == "pinned":
+            members = tabs.all_member_ids()
+            ents = [e for e in storage.list_entries(
+                        query=query, limit=config.MAX_HISTORY, pinned=True)
+                    if e.id not in members]
+        else:  # custom tab
+            ents = [e for e in (storage.get(i)
+                                for i in tabs.member_ids(self._tab))
+                    if e is not None]
+            if query:
+                ql = query.lower()
+                ents = [e for e in ents
+                        if ql in (e.text or "").lower()
+                        or ql in (e.filename or "").lower()]
+            ents.sort(key=lambda e: e.created_at, reverse=True)
+        if tf:
+            ents = [e for e in ents if clip_types.type_key(e) == tf]
+        return ents[:config.DISPLAY_LIMIT], len(ents)
+
     def reload(self) -> None:
         self.action_bar.hide()
         query = self.search.get_text().strip()
@@ -490,22 +700,8 @@ class Panel:
                         cached["pinned_total"], pinned, query)
             return
 
-        pinned_total = (storage.count(pinned=True)
-                        if not pinned else storage.count(pinned=pinned))
-        if self._type_filter:
-            # The SQL has no type column, so over-fetch the tab and filter in
-            # memory by bucket key (mirrors the macOS _entries_for_tab path),
-            # then cap to the display limit.
-            pool = storage.list_entries(
-                query=query, limit=config.MAX_HISTORY, pinned=pinned)
-            matched = [e for e in pool
-                       if clip_types.type_key(e) == self._type_filter]
-            entries = matched[:config.DISPLAY_LIMIT]
-            total = len(matched)
-        else:
-            entries = storage.list_entries(
-                query=query, limit=config.DISPLAY_LIMIT, pinned=pinned)
-            total = storage.count(pinned=pinned)
+        entries, total = self._entries_for_tab(query)
+        pinned_total = 0  # tab buttons no longer carry a count (matches macOS)
 
         self._reset_strip()
         self._update_header(len(entries), total, pinned_total, query)
@@ -569,6 +765,9 @@ class Panel:
         elif pinned:
             msg = ("No pinned items yet.\n"
                    "Pin a clip (☆) to keep it here, safe from history cleanup.")
+        elif self._tab not in ("recent", "pinned"):
+            msg = (f"Nothing in “{self._tab}” yet.\n"
+                   "Pin a clip (☆) and choose this tab to add it.")
         else:
             msg = ("Clipboard history is empty.\n"
                    "Copy something and it will appear here.")
@@ -600,10 +799,6 @@ class Panel:
             self.count_label.set_text(f"showing {shown} of {total}")
         else:
             self.count_label.set_text(f"{total} item{'s' if total != 1 else ''}")
-        self._set_tab_label(
-            self.tab_pinned,
-            f"★ Pinned ({pinned_total})" if pinned_total else "★ Pinned",
-        )
 
     def _cache_current(self, query: str, total: int, pinned_total: int) -> None:
         if not query and not self._type_filter:
@@ -616,10 +811,6 @@ class Panel:
     def _invalidate_cache(self) -> None:
         """Drop the per-tab render cache so the next reload rebuilds tiles."""
         self._tile_cache.clear()
-
-    def _set_tab_label(self, btn: Gtk.ToggleButton, label: str) -> None:
-        if btn.get_label() != label:
-            btn.set_label(label)
 
     def _refresh_selection(self) -> None:
         for i, tile in enumerate(self._tiles):
@@ -745,9 +936,71 @@ class Panel:
             self._selected = min(prev, len(self._tiles) - 1)
             self._refresh_selection()
 
-    def pin_entry(self, entry_id: int) -> None:
-        storage.toggle_pin(entry_id)
-        # A pin moves the entry between tabs, so both views are now stale.
+    def pin_entry(self, entry_id: int, anchor=None) -> None:
+        """Toggle an entry's tab membership (mirrors macOS _toggle_membership).
+
+        - On the Pinned tab: unpin it.
+        - On a custom tab it belongs to: remove it from that tab (stays pinned).
+        - Otherwise: pin it. If custom tabs exist and we have a widget to anchor
+          a menu to, offer a destination picker (Pinned + each custom tab);
+          else just pin.
+        """
+        if self._tab == "pinned":
+            self._set_pinned(entry_id, False)
+        elif (self._tab not in ("recent", "pinned")
+                and self._tab in tabs.tabs_for(entry_id)):
+            tabs.unassign(entry_id, self._tab)
+        elif tabs.tab_names() and anchor is not None:
+            self._show_tab_picker(anchor, entry_id)
+            return  # the picker performs the change + reload
+        else:
+            self._add_to(entry_id, "pinned")
+        self._invalidate_cache()
+        self.reload()
+
+    @staticmethod
+    def _set_pinned(entry_id: int, flag: bool) -> None:
+        entry = storage.get(entry_id)
+        if entry is not None and bool(entry.pinned) != bool(flag):
+            storage.toggle_pin(entry_id)
+
+    def _add_to(self, entry_id: int, dest: str) -> None:
+        # Tab members are also pinned so retention protects them.
+        self._set_pinned(entry_id, True)
+        if dest != "pinned":
+            tabs.assign(entry_id, dest)
+
+    def _show_tab_picker(self, anchor, entry_id: int) -> None:
+        pop = Gtk.Popover()
+        pop.set_relative_to(anchor)
+        pop.get_style_context().add_class("filter-popover")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        for setter in (box.set_margin_top, box.set_margin_bottom,
+                       box.set_margin_start, box.set_margin_end):
+            setter(6)
+        dests = [("pinned", "★ Pinned", None)]
+        dests += [(t["name"], t["name"], t.get("color")) for t in tabs.tabs()]
+        for dest, label, color in dests:
+            row = Gtk.Button()
+            row.get_style_context().add_class("filter-row")
+            lbl = Gtk.Label()
+            if color:
+                lbl.set_markup(
+                    f'<span foreground="{GLib.markup_escape_text(color)}">●</span> '
+                    f'{GLib.markup_escape_text(label)}')
+            else:
+                lbl.set_text(label)
+            lbl.set_xalign(0.0)
+            row.add(lbl)
+            row.connect("clicked", self._on_picker_pick, pop, entry_id, dest)
+            box.pack_start(row, False, False, 0)
+        pop.add(box)
+        box.show_all()
+        pop.popup()
+
+    def _on_picker_pick(self, _btn, pop, entry_id: int, dest: str) -> None:
+        pop.popdown()
+        self._add_to(entry_id, dest)
         self._invalidate_cache()
         self.reload()
 
@@ -799,29 +1052,22 @@ class Panel:
         return False  # let typing flow to the search entry
 
     def _reset_to_history(self) -> None:
-        self._switching_tab = True
-        try:
-            self._tab = "history"
-            self.tab_history.set_active(True)
-            self.tab_pinned.set_active(False)
-        finally:
-            self._switching_tab = False
+        # If the active tab is a custom one that was deleted elsewhere, fall
+        # back to Recent; otherwise keep the user's place across reopens.
+        if self._tab not in ("recent", "pinned") and self._tab not in tabs.tab_names():
+            self._tab = "recent"
+        self._build_tabbar()
 
-    def _on_tab(self, _btn, tab: str) -> None:
-        # Radio behavior across the two toggle buttons. set_active()/set_text()
-        # re-enter their handlers, so guard against the recursive churn — and
-        # keep the search-clear inside the guard so it can't fire a second,
-        # redundant reload.
-        if self._switching_tab:
+    def _select_tab(self, tab: str) -> None:
+        if tab == self._tab:
             return
         self._switching_tab = True
         try:
             self._tab = tab
-            self.tab_history.set_active(tab == "history")
-            self.tab_pinned.set_active(tab == "pinned")
             self.search.set_text("")
         finally:
             self._switching_tab = False
+        self._build_tabbar()
         self.reload()
 
     def _on_search(self, _entry) -> None:
