@@ -230,6 +230,11 @@ shortcuts is kept the first time Clippy edits them.
 - **Linux** needs a compositor with `wlr-layer-shell` **and**
   `ext-/wlr-data-control` (COSMIC, Sway, Hyprland); a plain GNOME Wayland session
   lacks layer-shell. The panel appears on the active output.
+- **Source-app icons are macOS-only.** macOS records the frontmost app at copy
+  time and shows its icon on each tile. Wayland deliberately denies apps any way
+  to query the active/foreground window or its app id (a security boundary), and
+  there is no COSMIC portal for it — so this can't be supported in a Wayland
+  session. The Linux tiles show the clip's type badge instead.
 - **macOS** builds are ad-hoc signed (no Developer ID), so Gatekeeper shows
   "unidentified developer" on first launch.
 
@@ -245,7 +250,9 @@ clippy/
   mac_app.py         macOS menubar app + global hotkey
   mac_panel.py       macOS clipboard-history panel (tiles, tabs, filter, QuickLook)
   mac_settings.py    macOS settings window
-  mac_tabs.py        macOS tabs  ·  mac_source.py  per-clip source-app map
+  mac_source.py      macOS per-clip source-app map (Wayland has no equivalent)
+  tabs.py            shared custom tabs store (tabs.json)  ·  mac_tabs.py alias
+  clip_types.py      shared clip type classifier (label + key + icon)
   capture.py         read clipboard → storage (+ sound, retention)
   clipboard.py       backend dispatch (text/image/file read + write)
   backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
