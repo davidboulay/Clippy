@@ -600,6 +600,12 @@ class Panel:
                     clipboard.copy_text(entry.text or "")
         except OSError:
             pass
+        # Recover-to-front: a recovered clip jumps back to position 1 so it's
+        # where you'd expect it next time the panel opens.
+        try:
+            storage.touch(entry.id)
+        except OSError:
+            pass
         self.hide()
 
     def show_context_menu(self, entry: Entry, _event=None) -> None:
