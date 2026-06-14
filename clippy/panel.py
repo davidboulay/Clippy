@@ -273,6 +273,7 @@ class Panel:
         self._shown_at = 0.0
         self._tab = "history"  # "history" (unpinned) | "pinned"
         self._switching_tab = False
+        self._type_filter = None  # None = all types; else a clip_types bucket key
         # Per-tab render cache: switching tabs reuses already-built tiles
         # instead of reconstructing widgets (and re-decoding images) every
         # time. Invalidated whenever the underlying data changes.
@@ -352,6 +353,8 @@ class Panel:
         self.search.connect("search-changed", self._on_search)
         header.pack_start(self.search, True, True, 0)
 
+        header.pack_start(self._build_filter_button(), False, False, 0)
+
         self.count_label = Gtk.Label(label="")
         self.count_label.get_style_context().add_class("count")
         header.pack_end(self.count_label, False, False, 0)
@@ -362,6 +365,70 @@ class Panel:
         gear.connect("clicked", self._on_settings)
         header.pack_end(gear, False, False, 0)
         return header
+
+    def _build_filter_button(self) -> Gtk.Widget:
+        """A funnel MenuButton: pick one type bucket (or All) to show."""
+        btn = Gtk.MenuButton()
+        btn.get_style_context().add_class("iconbtn")
+        btn.set_tooltip_text("Filter by type")
+        btn.set_image(Gtk.Image.new_from_icon_name(
+            "view-filter-symbolic", Gtk.IconSize.MENU))
+        self.filter_btn = btn
+
+        pop = Gtk.Popover()
+        pop.get_style_context().add_class("filter-popover")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        self._filter_checks: dict = {}
+
+        def add_row(key, label, icon_name):
+            row = Gtk.Button()
+            row.get_style_context().add_class("filter-row")
+            h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            img = (Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+                   if icon_name else Gtk.Image())
+            img.set_size_request(16, 16)
+            h.pack_start(img, False, False, 0)
+            lbl = Gtk.Label(label=label)
+            lbl.set_xalign(0.0)
+            h.pack_start(lbl, True, True, 0)
+            check = Gtk.Image.new_from_icon_name(
+                "object-select-symbolic", Gtk.IconSize.MENU)
+            check.set_no_show_all(True)
+            h.pack_end(check, False, False, 0)
+            row.add(h)
+            row.connect("clicked", lambda _b, k=key: self._on_type_filter(k))
+            self._filter_checks[key] = check
+            box.pack_start(row, False, False, 0)
+
+        add_row(None, "All types", None)
+        for key, label, icon_name in clip_types.TYPE_FILTERS:
+            add_row(key, label, icon_name)
+        box.show_all()
+        self._update_filter_checks()
+        pop.add(box)
+        btn.set_popover(pop)
+        return btn
+
+    def _update_filter_checks(self) -> None:
+        for key, check in self._filter_checks.items():
+            check.set_visible(key == self._type_filter)
+
+    def _on_type_filter(self, key) -> None:
+        self._type_filter = key
+        self._update_filter_checks()
+        ctx = self.filter_btn.get_style_context()
+        if key:
+            ctx.add_class("active")
+        else:
+            ctx.remove_class("active")
+        pop = self.filter_btn.get_popover()
+        if pop is not None:
+            pop.popdown()
+        self.reload()
 
     def _init_layer_shell(self) -> None:
         win = self.window
@@ -416,17 +483,29 @@ class Panel:
         # (no widget construction, no image decoding). Switching tabs is a
         # frequent action, so this keeps it snappy. Bypassed during search; the
         # cache is dropped whenever the data changes (pin/delete/new copy/open).
-        cached = self._tile_cache.get(self._tab) if not query else None
+        cached = (self._tile_cache.get(self._tab)
+                  if not query and not self._type_filter else None)
         if cached is not None:
             self._mount(cached["tiles"], cached["total"],
                         cached["pinned_total"], pinned, query)
             return
 
-        entries = storage.list_entries(
-            query=query, limit=config.DISPLAY_LIMIT, pinned=pinned
-        )
-        total = storage.count(pinned=pinned)
-        pinned_total = total if pinned else storage.count(pinned=True)
+        pinned_total = (storage.count(pinned=True)
+                        if not pinned else storage.count(pinned=pinned))
+        if self._type_filter:
+            # The SQL has no type column, so over-fetch the tab and filter in
+            # memory by bucket key (mirrors the macOS _entries_for_tab path),
+            # then cap to the display limit.
+            pool = storage.list_entries(
+                query=query, limit=config.MAX_HISTORY, pinned=pinned)
+            matched = [e for e in pool
+                       if clip_types.type_key(e) == self._type_filter]
+            entries = matched[:config.DISPLAY_LIMIT]
+            total = len(matched)
+        else:
+            entries = storage.list_entries(
+                query=query, limit=config.DISPLAY_LIMIT, pinned=pinned)
+            total = storage.count(pinned=pinned)
 
         self._reset_strip()
         self._update_header(len(entries), total, pinned_total, query)
@@ -482,13 +561,18 @@ class Panel:
         self._refresh_selection()
 
     def _mount_empty(self, pinned: bool) -> None:
-        self.empty_label.set_text(
-            "No pinned items yet.\n"
-            "Pin a clip (☆) to keep it here, safe from history cleanup."
-            if pinned else
-            "Clipboard history is empty.\n"
-            "Copy something and it will appear here."
-        )
+        if self._type_filter:
+            label = next((l for k, l, _i in clip_types.TYPE_FILTERS
+                          if k == self._type_filter), "matching")
+            msg = (f"No {label.lower()} clips here.\n"
+                   "Try another type or clear the filter.")
+        elif pinned:
+            msg = ("No pinned items yet.\n"
+                   "Pin a clip (☆) to keep it here, safe from history cleanup.")
+        else:
+            msg = ("Clipboard history is empty.\n"
+                   "Copy something and it will appear here.")
+        self.empty_label.set_text(msg)
         if self.empty_label.get_parent() is None:
             self.strip.pack_start(self.empty_label, True, True, 0)
         self.strip.show_all()
@@ -522,7 +606,7 @@ class Panel:
         )
 
     def _cache_current(self, query: str, total: int, pinned_total: int) -> None:
-        if not query:
+        if not query and not self._type_filter:
             self._tile_cache[self._tab] = {
                 "tiles": list(self._tiles),
                 "total": total,
