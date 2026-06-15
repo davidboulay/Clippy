@@ -40,6 +40,11 @@ st.add_text = lambda text, mime="text/plain", html=None: got.append(text) or 1
 cb.copy_text = lambda text: got.append("COPY:" + text)
 cb.copy_html = lambda html: got.append("COPYHTML")
 
+# A fires its received-clip hook (macOS wires this to the copy sound, since its
+# changeCount watcher is suppressed for our own writes).
+received = []
+A._on_received = lambda: received.append(1)
+
 # --- 2. candidate-address ordering (mDNS first, then stored addr, de-duped) --
 B._peers_online[A.device_id] = ("127.0.0.1", 48051, "A")
 B.trusted[A.device_id]["addr"] = "10.0.0.9"
@@ -59,7 +64,8 @@ B._deliver_text([("127.0.0.1", 9), ("127.0.0.1", 48051)], peer, env["hash"], pay
 time.sleep(0.5)
 assert "COPY:" + _TXT in got, f"fallback delivery failed: {got}"
 assert B._seen_has(env["hash"]), "hash should be 'seen' after a successful send"
-print("3. delivered via the 2nd address after the 1st refused; seen-after-success")
+assert received, "the _on_received hook should fire for a received clip"
+print("3. delivered via the 2nd address after the 1st refused; seen + hook fired")
 
 # --- 4. total failure leaves the hash un-seen (a later re-copy can retry) ----
 _T2 = "this never arrives"
