@@ -51,10 +51,32 @@ _PAIR_TRANSCRIPT = b"clippy-pair-v1"
 _PAIR_TIMEOUT = 120          # seconds a shown code stays valid
 _CONN_TIMEOUT = 5
 _SEEN_MAX = 256
+_SEND_ATTEMPTS = 3           # text delivery retries before giving up
+_SEND_BACKOFF = 0.4          # seconds between attempts (grows per round)
 
 
 def sync_available() -> bool:
     return _HAVE_NACL and _HAVE_ZC
+
+
+_SYNC_LOG = config.DATA_DIR / "sync.log"
+
+
+def _log(msg: str) -> None:
+    """Append a diagnostic line to <data>/sync.log (GUI apps swallow stdout).
+
+    Self-bounds the file so it can't grow without limit."""
+    try:
+        _SYNC_LOG.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if _SYNC_LOG.stat().st_size > 512 * 1024:
+                _SYNC_LOG.write_bytes(_SYNC_LOG.read_bytes()[-256 * 1024:])
+        except OSError:
+            pass
+        with open(_SYNC_LOG, "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
 
 
 # --- framing ---------------------------------------------------------------
@@ -565,15 +587,20 @@ class SyncEngine:
         if entries:
             self._broadcast_entry(entries[0])
 
-    def _peer_targets(self):
-        """Yield (peer, ip, port) for each paired peer we can reach (mDNS first,
-        stored address as the mDNS-free fallback)."""
-        for pid, peer in list(self.trusted.items()):
-            online = self._peers_online.get(pid)
-            if online:
-                yield peer, online[0], online[1]
-            elif peer.get("addr"):
-                yield peer, peer["addr"], config.SYNC_PORT
+    def _peer_addrs(self, pid, peer):
+        """Ordered, de-duped candidate (ip, port) for a peer: the live mDNS
+        address first, then the last-known stored address. Trying *both* (not
+        just one) is what survives a stale mDNS record or a dual-homed peer
+        whose advertised IP is momentarily unroutable."""
+        addrs = []
+        online = self._peers_online.get(pid)
+        if online:
+            addrs.append((online[0], online[1]))
+        if peer.get("addr"):
+            a = (peer["addr"], config.SYNC_PORT)
+            if a not in addrs:
+                addrs.append(a)
+        return addrs
 
     def _broadcast_entry(self, entry) -> None:
         h = getattr(entry, "hash", None)
@@ -584,13 +611,14 @@ class SyncEngine:
             text = getattr(entry, "text", None)
             if not text:
                 return
-            self._seen_add(h)
             env = {"v": PROTO, "origin": self.device_id, "ts": int(time.time()),
                    "hash": h, "kind": "text", "mime": "text/plain", "text": text}
             payload = json.dumps(env).encode("utf-8")
-            for peer, ip, port in self._peer_targets():
-                threading.Thread(target=self._send_to, args=(ip, port, peer, payload),
-                                 daemon=True).start()
+            for pid, peer in list(self.trusted.items()):
+                addrs = self._peer_addrs(pid, peer)
+                if addrs:
+                    threading.Thread(target=self._deliver_text,
+                                     args=(addrs, peer, h, payload), daemon=True).start()
             return
         # media (image / file): stream the on-disk blob, capped + integrity-checked.
         import os
@@ -599,63 +627,96 @@ class SyncEngine:
             return
         size = getattr(entry, "size", 0) or os.path.getsize(blob)
         if size > settings.get("sync_max_bytes"):
-            try:
-                from . import setup  # notify helper lives outside; fall back to print
-            except Exception:
-                pass
             print(f"[clippy-sync] '{getattr(entry,'filename',None) or kind}' "
                   f"({size} B) exceeds the sync size limit — not sent.")
             return
-        targets = list(self._peer_targets())
-        if not targets:
-            return  # nothing paired/online -> no transfer, no progress bar
-        self._seen_add(h)
+        peers = [(self._peer_addrs(pid, peer), peer)
+                 for pid, peer in list(self.trusted.items())]
+        peers = [(a, p) for a, p in peers if a]
+        if not peers:
+            return  # nothing paired/reachable -> no transfer, no progress bar
         mime = getattr(entry, "mime", None) or "application/octet-stream"
         name = _name_with_ext(getattr(entry, "filename", None) or os.path.basename(blob), mime)
         manifest = {"v": PROTO, "origin": self.device_id, "hash": h, "kind": kind,
                     "mime": mime, "name": name, "size": size}
-        for peer, ip, port in targets:
+        for addrs, peer in peers:
             threading.Thread(target=self._send_media_to,
-                             args=(ip, port, peer, blob, manifest), daemon=True).start()
+                             args=(addrs, peer, blob, manifest, h), daemon=True).start()
 
-    def _send_to(self, ip, port, peer, payload: bytes) -> None:
+    def _deliver_text(self, addrs, peer, h, payload: bytes) -> None:
+        """Send one text payload to a peer, retrying across its candidate
+        addresses; mark the hash 'seen' only once a send actually succeeds so a
+        transient failure doesn't suppress a later re-copy of the same text."""
+        name = peer.get("name", "peer")
         try:
             box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
-            enc = box.encrypt(payload)
-            with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
-                _send_frame(s, {"type": "sync", "from": self.device_id, "box": bytes(enc).hex()})
-        except Exception:
-            pass
+            frame = {"type": "sync", "from": self.device_id,
+                     "box": bytes(box.encrypt(payload)).hex()}
+        except Exception as exc:
+            _log(f"text: encrypt for {name} failed: {exc!r}")
+            return
+        last = None
+        for attempt in range(_SEND_ATTEMPTS):
+            for ip, port in addrs:
+                try:
+                    with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
+                        _send_frame(s, frame)
+                    if attempt or (ip, port) != addrs[0]:
+                        _log(f"text: delivered to {name} via {ip}:{port} "
+                             f"(attempt {attempt + 1})")
+                    self._seen_add(h)
+                    return
+                except Exception as exc:
+                    last = exc
+            if attempt + 1 < _SEND_ATTEMPTS:
+                time.sleep(_SEND_BACKOFF * (attempt + 1))
+        _log(f"text: send to {name} FAILED after {_SEND_ATTEMPTS}x over "
+             f"{addrs}: {last!r}")
 
-    def _send_media_to(self, ip, port, peer, blob, manifest) -> None:
-        """Stream an on-disk blob to one peer as encrypted chunks, with progress."""
+    def _send_media_to(self, addrs, peer, blob, manifest, h) -> None:
+        """Stream an on-disk blob to one peer (trying each candidate address,
+        first success wins), with progress; mark 'seen' on success."""
         total = manifest["size"]
         name = manifest["name"]
+        pname = peer.get("name", "peer")
         show = (self._on_progress is not None
                 and total > settings.get("progress_min_bytes"))
-        sent = 0
         try:
             box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
-            with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
-                s.settimeout(120)
-                _send_frame(s, {"type": "media", "from": self.device_id,
-                                "box": bytes(box.encrypt(
-                                    json.dumps(manifest).encode("utf-8"))).hex()})
-                with open(blob, "rb") as f:
-                    while True:
-                        chunk = f.read(config.SYNC_CHUNK)
-                        if not chunk:
-                            break
-                        _send_raw(s, bytes(box.encrypt(chunk)))
-                        sent += len(chunk)
-                        if show:
-                            self._on_progress(name, sent, total, False)
-                _send_raw(s, b"")          # end-of-stream marker
-            if show:
-                self._on_progress(name, total, total, True)
-        except Exception:
-            if show:
-                self._on_progress(name, sent, total, True)  # close the bar on failure
+            mframe = {"type": "media", "from": self.device_id,
+                      "box": bytes(box.encrypt(
+                          json.dumps(manifest).encode("utf-8"))).hex()}
+        except Exception as exc:
+            _log(f"media: encrypt for {pname} failed: {exc!r}")
+            return
+        last = None
+        for ip, port in addrs:
+            sent = 0
+            try:
+                with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
+                    s.settimeout(120)
+                    _send_frame(s, mframe)
+                    with open(blob, "rb") as f:
+                        while True:
+                            chunk = f.read(config.SYNC_CHUNK)
+                            if not chunk:
+                                break
+                            _send_raw(s, bytes(box.encrypt(chunk)))
+                            sent += len(chunk)
+                            if show:
+                                self._on_progress(name, sent, total, False)
+                    _send_raw(s, b"")          # end-of-stream marker
+                if show:
+                    self._on_progress(name, total, total, True)
+                if (ip, port) != addrs[0]:
+                    _log(f"media: '{name}' delivered to {pname} via {ip}:{port}")
+                self._seen_add(h)
+                return
+            except Exception as exc:
+                last = exc
+                if show:
+                    self._on_progress(name, sent, total, True)  # close the bar
+        _log(f"media: '{name}' send to {pname} FAILED over {addrs}: {last!r}")
 
     # -- seen-hash LRU ---------------------------------------------------
     def _seen_has(self, h: str) -> bool:
