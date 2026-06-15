@@ -102,6 +102,18 @@ def run() -> int:
 
     engine = sync.SyncEngine()
 
+    def _on_received_clip():
+        # macOS's changeCount watcher is suppressed for our own clipboard writes,
+        # so capture_current (which plays the copy sound) never runs for received
+        # clips — play it here instead, honoring the setting.
+        try:
+            from . import sound
+            if settings.get("sound_on_copy"):
+                sound.play(settings.get("sound_choice"))
+        except Exception:
+            pass
+    engine._on_received = _on_received_clip
+
     class ClippyApp(rumps.App):
         def __init__(self):
             icon = _menubar_icon_path()
