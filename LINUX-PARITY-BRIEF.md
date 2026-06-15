@@ -19,6 +19,44 @@ tag.
 > (PRs + a required CI check, no direct pushes). This changed during the macOS
 > work.
 
+## UPDATE 2026-06-15 — two fixes landed after this brief was written
+
+Two bug fixes shipped to `main` after the original brief. **Pull `main` before
+starting** so you build on them.
+
+### (a) Sync delivery hardening — already in shared core, just DEPLOY + verify
+**PR #15 (merged).** Clipboard delivery was fire-and-forget: a single TCP attempt
+to a single address with errors silently swallowed and no retry, so any transient
+blip (stale mDNS record, dual-homed peer, sleep/wake race) silently dropped that
+one clip — the "fails once in a while, one direction" symptom. Fixed in
+`sync.py`: `_peer_addrs()` (try mDNS IP **and** stored addr), `_deliver_text()`
+(retry across both, mark `seen` only after success), `_send_media_to()` (try each
+addr), plus failure logging to **`<DATA_DIR>/sync.log`** (i.e.
+`~/.local/share/clippy/sync.log` on Linux). Covered by
+`scripts/sync_delivery_test.py` (in CI).
+- **This is shared core — NOT a porting task.** Linux gets it automatically on
+  `git pull`. **Action: update the Linux install and restart the daemon**
+  (`clippy quit` then relaunch, or reinstall the `.deb`/`./scripts/install.sh`),
+  then sanity-check two-way sync. If a miss ever recurs, read `sync.log` first —
+  it names the peer, the addresses tried, and the exception.
+- Related, still worth doing on Linux (optional, separate): the dual-homed root
+  cause can also be addressed by **binding the outbound socket to the advertised
+  local IP**, or `sysctl net.ipv4.conf.all.rp_filter=2`. The retry/dual-addr fix
+  masks it; a proper bind would be cleaner. Low priority.
+
+### (b) Live-refresh the open panel — macOS-only fix; PORT to the GTK panel
+**PR #16 (merged).** The macOS panel only rebuilt tiles in `show()`, so a clip
+arriving from a remote peer (or a local copy) **while the panel was open** wasn't
+shown until close/reopen. Fixed on macOS with a 0.6s timer that runs only while
+visible, reloading when the history signature changes (preserving selection).
+- **The GTK Linux panel (`panel.py`) has the same "reload only on open" pattern
+  → it needs the equivalent.** Add a `GLib.timeout_add(600, …)` (or
+  `timeout_add_seconds`) started when the panel is shown and removed when hidden;
+  each tick compare a cheap history signature (newest id + count, mirror macOS
+  `_history_sig`) to the last build and call the existing reload only on change,
+  preserving the selected tile + search text. Small, high-value — fold into the
+  PR-1 batch below.
+
 ## Architecture reminder
 
 - **Shared, cross-platform core** (don't fork — improve in place, keep platform
