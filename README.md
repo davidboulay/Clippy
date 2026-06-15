@@ -23,22 +23,29 @@ The same panel and history engine run on both platforms:
   thumbnails for images, videos, PDFs and docs.
 - **Pin** items so they survive pruning and sort first; **search** by typing;
   **keyboard navigation** and quick-select.
+- **Tabs** — *Recent*, *★ Pinned*, and your own **colored, named custom tabs**;
+  pin a clip and choose which tab it lands in.
+- **Type filter** — show only one kind at a time (text / image / video / audio /
+  PDF / spreadsheet / archive / other), with per-type colored badges.
 - **Plain vs. rich paste** — strip formatting, or keep it when the source had it.
   Right-click a tile to copy as plain text.
 - **History retention** — keep for *1 day / 1 week / 1 month / 1 year / forever*,
   with automatic pruning, plus a manual *Clear history*.
+- **Live updates** — an open panel refreshes as new clips arrive, including ones
+  pushed from a synced peer.
 - **Follows the OS light/dark theme** automatically.
 - **Encrypted LAN sync** (opt-in) — share the clipboard across paired devices:
   text, images, and **any file**, with previews and a size cap you control.
 - **Local-only storage** — SQLite + files under your data dir; nothing leaves
   your machine unless you pair devices for sync.
 
-Each platform adds its native niceties:
+Each platform integrates natively:
 
 - **Linux:** a system-tray paperclip, automatic **COSMIC shortcut binding**, and
   a full-screen click-away overlay.
-- **macOS:** a menubar paperclip, **Recent / Pinned / custom tabs**, a **type
-  filter**, the **icon of the app each clip came from**, and QuickLook previews.
+- **macOS:** a menubar paperclip, **QuickLook** thumbnails, and the **icon of the
+  app each clip came from** on every tile (a Wayland security boundary makes that
+  last one macOS-only — see [Limitations](#limitations)).
 
 ## Get Clippy
 
@@ -51,7 +58,7 @@ on Sway, Hyprland, and other wlroots compositors.
 from the **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**:
 
 ```bash
-sudo apt install ./clippy_1.4.0_all.deb
+sudo apt install ./clippy_1.4.1_all.deb
 ```
 
 …or from the terminal with the GitHub CLI:
