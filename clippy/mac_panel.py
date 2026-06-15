@@ -54,7 +54,7 @@ from AppKit import (
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
-from Foundation import NSMakePoint, NSMakeRect, NSMakeSize, NSObject
+from Foundation import NSMakePoint, NSMakeRect, NSMakeSize, NSObject, NSTimer
 
 from . import clip_types, clipboard, config, mac_source, settings, sound, storage
 from . import tabs as mac_tabs   # the shared custom-tabs store (was mac_tabs)
@@ -812,6 +812,7 @@ class PanelController(NSObject):
         self._tab_dlg = None       # the New-tab popup while open
         self._tab_dlg_monitor = None
         self._last_sig = None      # (tab,query,count,newest) of the last rebuild
+        self._refresh_timer = None  # polls for new clips while the panel is open
         return self
 
     def _history_sig(self):
@@ -1054,6 +1055,43 @@ class PanelController(NSObject):
         self._panel.makeKeyWindow()
         self._panel.makeFirstResponder_(self._search)   # type-to-search immediately
         self._add_click_monitor()
+        self._start_refresh_timer()
+
+    # -- live refresh while open (catches clips arriving via sync) --------
+    def _start_refresh_timer(self):
+        if self._refresh_timer is not None:
+            return
+        self._refresh_timer = (
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.6, self, b"refreshTick:", None, True))
+
+    def _stop_refresh_timer(self):
+        if self._refresh_timer is not None:
+            self._refresh_timer.invalidate()
+            self._refresh_timer = None
+
+    def refreshTick_(self, _timer):
+        # While the panel is visible, pick up clips that arrived from a remote
+        # peer (or a local copy) without waiting for a close/reopen.
+        if self._panel is None or not self._panel.isVisible():
+            self._stop_refresh_timer()
+            return
+        try:
+            if self._history_sig() != self._last_sig:
+                self._reload_preserving_selection()
+        except Exception:
+            pass
+
+    def _reload_preserving_selection(self):
+        sel_id = None
+        if 0 <= self._sel < len(self._tiles):
+            sel_id = getattr(self._tiles[self._sel], "_entry_id", None)
+        self.reload()
+        if sel_id is not None:
+            for i, t in enumerate(self._tiles):
+                if getattr(t, "_entry_id", None) == sel_id:
+                    self._set_selection(i)
+                    break
 
     # -- search + keyboard nav -------------------------------------------
     def controlTextDidChange_(self, _notification):
@@ -1520,6 +1558,7 @@ class PanelController(NSObject):
 
     def hide(self):
         self._remove_click_monitor()
+        self._stop_refresh_timer()
         if self._panel is not None:
             self._panel.orderOut_(None)
         self._restore_frontmost()
@@ -1550,6 +1589,7 @@ class PanelController(NSObject):
         # Close the panel but DON'T bounce focus back to the previous app —
         # otherwise it competes with the Settings window coming to the front.
         self._remove_click_monitor()
+        self._stop_refresh_timer()
         self._prev_app = None
         if self._panel is not None:
             self._panel.orderOut_(None)
