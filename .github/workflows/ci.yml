@@ -32,3 +32,6 @@ jobs:
 
       - name: Device-id drift self-test
         run: PYTHONPATH=. python scripts/sync_drift_test.py
+
+      - name: Delivery hardening self-test
+        run: PYTHONPATH=. python scripts/sync_delivery_test.py
