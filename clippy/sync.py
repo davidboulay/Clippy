@@ -170,6 +170,12 @@ class SyncEngine:
                  on_progress: Optional[Callable] = None):
         self._on_status = on_status
         self._on_progress = on_progress   # (name, sent, total, done) for big sends
+        # Called (no args) after a *received* clip is stored + put on the local
+        # clipboard. macOS uses it for the copy sound, because its changeCount
+        # watcher is (correctly) suppressed for our own writes so capture_current
+        # — which normally plays the sound — never runs for received clips. On
+        # Linux the wl-paste watch re-fires capture, so it leaves this unset.
+        self._on_received: Optional[Callable[[], None]] = None
         self._lock = threading.Lock()
         self._seen: "OrderedDict[str, float]" = OrderedDict()
         self._server: Optional[socket.socket] = None
@@ -484,6 +490,7 @@ class SyncEngine:
             clipboard.copy_text(text)   # plain text only (v0)
         except Exception:
             pass
+        self._notify_received()
 
     # -- media receive (streamed) ----------------------------------------
     def _handle_media(self, conn, frame) -> None:
@@ -544,8 +551,17 @@ class SyncEngine:
                 shutil.move(tmp, dest)
                 storage.add_file_from_path(str(dest), name, mime)
                 clipboard.copy_file(str(dest))
+            self._notify_received()
         except Exception:
             self._safe_unlink(tmp)
+
+    def _notify_received(self) -> None:
+        cb = self._on_received
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
 
     @staticmethod
     def _unique_path(path):
