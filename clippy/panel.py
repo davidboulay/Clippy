@@ -282,6 +282,11 @@ class Panel:
         # Bumped on every reload so an in-flight streamed build can detect it
         # has been superseded and stop.
         self._build_seq = 0
+        # Live-refresh: while the panel is open, a GLib timer polls a cheap
+        # history signature so clips arriving from a peer (or a local copy)
+        # show up without a close/reopen. _refresh_source is the timer id.
+        self._refresh_source = None
+        self._last_sig = None
 
         # Non-modal bottom strip: the window *is* the panel (no full-screen
         # backdrop), so the COSMIC panel and other apps stay clickable. Click-
@@ -683,11 +688,26 @@ class Panel:
             ents = [e for e in ents if clip_types.type_key(e) == tf]
         return ents[:config.DISPLAY_LIMIT], len(ents)
 
+    def _history_sig(self):
+        """A cheap fingerprint of what the current view should show — newest
+        id + total count + the view params. Changes when a clip is added,
+        removed, or the tab/search/filter changes."""
+        try:
+            newest = storage.list_entries(limit=1)
+            newest_id = newest[0].id if newest else 0
+            return (self._tab, self.search.get_text().strip(),
+                    self._type_filter, storage.count(), newest_id)
+        except OSError:
+            return None
+
     def reload(self) -> None:
         self.action_bar.hide()
         query = self.search.get_text().strip()
         pinned = self._tab == "pinned"
         self._build_seq += 1  # supersede any in-flight streamed build
+        # Snapshot the state we're about to render so the live-refresh timer
+        # only reloads when something actually changed.
+        self._last_sig = self._history_sig()
 
         # Fast path: a fully-built tab is cached — re-pack its tiles instantly
         # (no widget construction, no image decoding). Switching tabs is a
@@ -1103,6 +1123,7 @@ class Panel:
         self._shown_at = time.monotonic()
         self.search.grab_focus()
         GLib.timeout_add(180, self._relax_keyboard)
+        self._start_refresh_timer()
 
     def _relax_keyboard(self) -> bool:
         # Drop back to ON_DEMAND so click-away dismissal works again. This fires
@@ -1115,10 +1136,43 @@ class Panel:
         return False
 
     def hide(self) -> None:
+        self._stop_refresh_timer()
         self.action_bar.hide()
         self.window.hide()
         self.search.set_text("")
         self._visible = False
+
+    # -- live refresh while open ------------------------------------------
+    def _start_refresh_timer(self) -> None:
+        if self._refresh_source is None:
+            self._refresh_source = GLib.timeout_add(600, self._refresh_tick)
+
+    def _stop_refresh_timer(self) -> None:
+        if self._refresh_source is not None:
+            GLib.source_remove(self._refresh_source)
+            self._refresh_source = None
+
+    def _refresh_tick(self) -> bool:
+        # Runs only while the panel is open; reload (preserving the selected
+        # tile + search text) when a clip arrives from a peer or a local copy.
+        if not self._visible:
+            self._refresh_source = None
+            return False  # stop the timer
+        try:
+            if self._history_sig() != self._last_sig:
+                self._reload_preserving_selection()
+        except Exception:
+            pass
+        return True  # keep ticking
+
+    def _reload_preserving_selection(self) -> None:
+        prev = self._selected
+        # The DB changed, so any cached tab tiles are stale.
+        self._invalidate_cache()
+        self.reload()
+        if self._tiles and prev > 0:
+            self._selected = min(prev, len(self._tiles) - 1)
+            self._refresh_selection()
 
     def toggle(self) -> None:
         self.hide() if self._visible else self.show()
