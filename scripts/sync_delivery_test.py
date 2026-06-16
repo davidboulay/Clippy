@@ -75,5 +75,13 @@ B._deliver_text([("127.0.0.1", 9)], peer, h2, json.dumps(env2).encode())  # only
 assert not B._seen_has(h2), "a fully-failed send must NOT mark the hash seen"
 print("4. fully-failed send left the hash un-seen (a later re-copy will retry)")
 
+# --- 5. 'seen' expires after the TTL so a deliberate re-copy re-syncs ---------
+hx = hashlib.sha256(b"re-copy me later").hexdigest()
+B._seen_add(hx)
+assert B._seen_has(hx), "freshly-added hash should be seen (echo suppression)"
+B._seen[hx] = time.time() - sync._SEEN_TTL - 1          # backdate past the TTL
+assert not B._seen_has(hx), "an expired hash must no longer be 'seen' (re-copy re-syncs)"
+print("5. 'seen' entry expires after the TTL — re-copying an item later re-syncs")
+
 A.stop(); B.stop()
 print("\n✅ DELIVERY HARDENING TESTS PASSED")
