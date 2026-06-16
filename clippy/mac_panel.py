@@ -988,7 +988,11 @@ class PanelController(NSObject):
             return
         th = _TILE_H
         y = 2.0                       # sit close to the bottom edge (just above the bar)
-        x = 0.0                       # first tile's left edge aligns with the search field
+        # Small lead-in *inside* the scroll content (not a fixed margin), so the
+        # first tile isn't glued to the screen edge at rest but still scrolls all
+        # the way to the edge — nothing masks it. A matching trailing gap falls
+        # out of the width math below (x ends one _GAP past the last tile).
+        x = _GAP
         for e in entries:
             tile = _make_tile(e)
             tile._entry_id = e.id          # for click → selectEntry_
