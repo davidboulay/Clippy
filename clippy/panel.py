@@ -264,7 +264,7 @@ class Tile(Gtk.EventBox):
                 img = self._load_image(thumb)
                 if img is not None:
                     return img
-            return self._file_card(name, "VIDEO")
+            return self._file_card("VIDEO")
         if entry.is_file:
             # Text-like files (csv/txt/…): show a snippet of the content — no
             # system thumbnailer renders these, but the bytes are right here.
@@ -281,7 +281,7 @@ class Tile(Gtk.EventBox):
                 if img is not None:
                     return img
             self._panel._warm_file_thumb(path, key, mime, ext)
-            return self._file_card(name, ext.upper() or "FILE")
+            return self._file_card(ext.upper() or "FILE")
         return None
 
     @staticmethod
@@ -331,7 +331,7 @@ class Tile(Gtk.EventBox):
             return None
         return str(out) if out.exists() else None
 
-    def _file_card(self, name: str, label: str) -> Gtk.Widget:
+    def _file_card(self, label: str) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_halign(Gtk.Align.CENTER)
         box.set_valign(Gtk.Align.CENTER)
@@ -339,12 +339,8 @@ class Tile(Gtk.EventBox):
         kind.get_style_context().add_class("badge")
         kind.get_style_context().add_class("badge-text")
         box.pack_start(kind, False, False, 0)
-        fn = Gtk.Label(label=name or "file")
-        fn.set_max_width_chars(24)
-        fn.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        fn.set_justify(Gtk.Justification.CENTER)
-        fn.get_style_context().add_class("preview-text")
-        box.pack_start(fn, False, False, 0)
+        # The filename now lives in the tile footer (_meta_text), so the card is
+        # just a type placeholder — no redundant name label here.
         return box
 
     def _meta_text(self, entry: Entry) -> str:
@@ -353,6 +349,10 @@ class Tile(Gtk.EventBox):
             sz = entry.size or 0
             human = (f"{sz / 1024 / 1024:.1f} MB" if sz >= 1024 * 1024
                      else f"{max(1, sz // 1024)} KB")
+            # Files now render a thumbnail/snippet instead of a name card, so the
+            # footer is where the filename lives — show it (ellipsized) + size.
+            if entry.is_file and entry.filename:
+                return f"{entry.filename}  ·  {human}"
             return f"{when}  ·  {human}"
         text = entry.text or ""
         lines = text.count("\n") + 1
