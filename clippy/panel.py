@@ -186,7 +186,10 @@ class Tile(Gtk.EventBox):
         footer.set_xalign(0.0)
         footer.get_style_context().add_class("meta")
         footer.set_text(self._meta_text(entry))
-        footer.set_ellipsize(Pango.EllipsizeMode.END)
+        # File footers lead with the filename — truncate in the middle so the
+        # extension stays visible (matches macOS); other footers ellipsize END.
+        footer.set_ellipsize(Pango.EllipsizeMode.MIDDLE if entry.is_file
+                             else Pango.EllipsizeMode.END)
         card.pack_start(footer, False, False, 0)
 
         self.set_size_request(config.TILE_WIDTH, config.TILE_HEIGHT)
@@ -349,10 +352,11 @@ class Tile(Gtk.EventBox):
             sz = entry.size or 0
             human = (f"{sz / 1024 / 1024:.1f} MB" if sz >= 1024 * 1024
                      else f"{max(1, sz // 1024)} KB")
-            # Files now render a thumbnail/snippet instead of a name card, so the
-            # footer is where the filename lives — show it (ellipsized) + size.
+            # Files render a thumbnail/snippet instead of a name card, so the
+            # footer carries the filename (matches macOS: name only, middle-
+            # truncated by the caller so the extension stays visible).
             if entry.is_file and entry.filename:
-                return f"{entry.filename}  ·  {human}"
+                return entry.filename
             return f"{when}  ·  {human}"
         text = entry.text or ""
         lines = text.count("\n") + 1
