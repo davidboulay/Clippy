@@ -300,6 +300,16 @@ def touch(entry_id: int) -> None:
                      (time.time(), entry_id))
 
 
+def latest_created_at() -> float:
+    """Newest created_at across all entries. A cheap change-detector for panels:
+    unlike (count, newest-id), this changes when an existing entry is bumped to
+    the front (touch / re-copy of a file already in history), so the panel
+    rebuilds instead of showing a stale order."""
+    with _connect() as conn:
+        row = conn.execute("SELECT MAX(created_at) AS m FROM entries").fetchone()
+        return row["m"] if row and row["m"] is not None else 0.0
+
+
 def delete(entry_id: int) -> None:
     with _connect() as conn:
         row = conn.execute(
