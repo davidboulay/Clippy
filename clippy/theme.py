@@ -220,8 +220,11 @@ def build_css(dark: bool | None = None) -> str:
 .action-btn.danger {{ color: {c['danger']}; }}
 
 .strip {{ background-color: transparent; }}
-/* Flush to the screen edges; only top/bottom breathing room. */
-.strip-inner {{ padding: 4px 0 10px 0; }}
+/* The scrolled window itself is full screen width (no border inset that could
+   mask a tile). The 12px lead-in/trailing gap lives on this inner box — the
+   scroll *content* — so the first tile clears the edge at rest but tiles still
+   slide all the way to the edge as you scroll (the gap scrolls with them). */
+.strip-inner {{ padding: 4px 12px 10px 12px; }}
 
 .tile {{
     background-color: {c['tile']};
