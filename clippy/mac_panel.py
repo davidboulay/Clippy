@@ -538,8 +538,15 @@ def _make_tile(entry):
         rich.setFrame_(NSMakeRect(src_right - 34, (bh - 13) / 2, 34, 13))
         band.addSubview_(rich)
 
-    # footer: relative time + size/chars
-    footer = _label(_meta_text(entry), 10, NSColor.tertiaryLabelColor())
+    # footer: the file name for files/images (the preview hides it otherwise),
+    # else relative time + size/chars.
+    if entry.is_file or entry.is_image:
+        fname = entry.filename or os.path.basename(entry.image_path or "") or "file"
+        footer = _label(fname, 10, NSColor.secondaryLabelColor())
+        from AppKit import NSLineBreakByTruncatingMiddle
+        footer.setLineBreakMode_(NSLineBreakByTruncatingMiddle)  # keep the extension
+    else:
+        footer = _label(_meta_text(entry), 10, NSColor.tertiaryLabelColor())
     footer.setFrame_(NSMakeRect(_TILE_PAD + 2, _TILE_PAD - 2, w - 2 * _TILE_PAD - 2, 14))
     tile.addSubview_(footer)
 
@@ -819,9 +826,10 @@ class PanelController(NSObject):
 
     def _history_sig(self):
         try:
-            es = storage.list_entries(limit=1)
-            newest = es[0].id if es else 0
-            return (self._tab, self._query, self._type_filter, storage.count(), newest)
+            # latest_created_at (not newest id) so a re-copied/touched file that
+            # jumps to the front is detected and the panel rebuilds.
+            return (self._tab, self._query, self._type_filter,
+                    storage.count(), storage.latest_created_at())
         except Exception:
             return None
 
@@ -909,11 +917,12 @@ class PanelController(NSObject):
         self._tabbar = tabbar
 
         # Horizontal scroll of tiles below the top row, populated by reload().
-        # Pulled close to the bottom edge; the scrollbar is always visible.
-        # (Legacy style reserves the scroller strip *inside* this frame, so the
-        # tiles' clip area sits just above the always-on bar near the bottom.)
+        # Full-width (x=0): the tile strip runs flush to both screen edges — no
+        # side margin band masking the first/last tile. Pulled close to the
+        # bottom edge; the scrollbar is always visible (legacy style reserves the
+        # scroller strip *inside* this frame, just above the bottom edge).
         scroll_h = row_y - 6 - 6
-        sframe = NSMakeRect(_PAD, 6, full_w - 2 * _PAD, scroll_h)
+        sframe = NSMakeRect(0, 6, full_w, scroll_h)
         scroll = NSScrollView.alloc().initWithFrame_(sframe)
         scroll.setHasHorizontalScroller_(True)
         scroll.setHasVerticalScroller_(False)
