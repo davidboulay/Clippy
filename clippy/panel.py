@@ -875,7 +875,9 @@ class Panel:
         """
         try:
             if entry.is_file and entry.image_path:
-                clipboard.copy_file(entry.image_path)   # put the real file back
+                # Stage a copy under the original filename so the pasted file
+                # isn't named after its content hash (the blob's name).
+                clipboard.copy_file(storage.paste_path(entry) or entry.image_path)
             elif entry.is_image and entry.image_path:
                 clipboard.copy_image(Path(entry.image_path).read_bytes(),
                                      entry.mime or "image/png")
