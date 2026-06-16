@@ -265,6 +265,33 @@ def get(entry_id: int) -> Optional[Entry]:
     return _row_to_entry(row) if row else None
 
 
+def paste_path(entry) -> Optional[str]:
+    """A filesystem path with the entry's *original* filename, for putting a
+    file back on the clipboard. Blobs are stored content-addressed as
+    ``<sha256><ext>``, so pasting the blob directly drops a hash-named file. This
+    stages a copy under ``<DATA_DIR>/paste/<original name>`` and returns it, so
+    the pasted file carries its real name. Falls back to the blob path. Shared by
+    the GTK and macOS panels."""
+    import os
+    import shutil
+    blob = getattr(entry, "image_path", None)
+    if not blob:
+        return None
+    name = os.path.basename(entry.filename or "") or os.path.basename(blob)
+    try:
+        stage = config.DATA_DIR / "paste"
+        stage.mkdir(parents=True, exist_ok=True)
+        dest = stage / name
+        # Re-stage unless an identical copy is already there (size match is a
+        # cheap proxy — the blob name is the content hash, so same name+size is
+        # the same bytes).
+        if not dest.exists() or dest.stat().st_size != (entry.size or 0):
+            shutil.copyfile(blob, dest)
+        return str(dest)
+    except OSError:
+        return blob
+
+
 def touch(entry_id: int) -> None:
     """Bump an entry's created_at to now (move it to the front of history) —
     used when an old clip is recovered from the panel."""
