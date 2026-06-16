@@ -294,7 +294,9 @@ def _load_entry(entry, mode="auto"):
     from pathlib import Path
     try:
         if entry.is_file and entry.image_path:
-            clipboard.copy_file(entry.image_path)
+            # Put the file back under its ORIGINAL name, not the content-hash
+            # blob name (storage.paste_path stages a correctly-named copy).
+            clipboard.copy_file(storage.paste_path(entry) or entry.image_path)
         elif entry.is_image and entry.image_path:
             clipboard.copy_image(Path(entry.image_path).read_bytes(),
                                  entry.mime or "image/png")
