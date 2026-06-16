@@ -689,14 +689,16 @@ class Panel:
         return ents[:config.DISPLAY_LIMIT], len(ents)
 
     def _history_sig(self):
-        """A cheap fingerprint of what the current view should show — newest
-        id + total count + the view params. Changes when a clip is added,
-        removed, or the tab/search/filter changes."""
+        """A cheap fingerprint of what the current view should show — total
+        count + newest created_at + the view params. Using latest_created_at()
+        (not the newest id) means a re-copied or recovered entry, which is bumped
+        to the front via storage.touch / add_file_from_path without changing the
+        count or max id, still flips the signature so the panel rebuilds at the
+        front instead of keeping the stale order. Mirrors mac_panel._history_sig."""
         try:
-            newest = storage.list_entries(limit=1)
-            newest_id = newest[0].id if newest else 0
             return (self._tab, self.search.get_text().strip(),
-                    self._type_filter, storage.count(), newest_id)
+                    self._type_filter, storage.count(),
+                    storage.latest_created_at())
         except OSError:
             return None
 
