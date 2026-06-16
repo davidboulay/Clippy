@@ -51,6 +51,12 @@ _PAIR_TRANSCRIPT = b"clippy-pair-v1"
 _PAIR_TIMEOUT = 120          # seconds a shown code stays valid
 _CONN_TIMEOUT = 5
 _SEEN_MAX = 256
+_SEEN_TTL = 30               # seconds a hash stays "seen". Long enough to absorb
+                             # the sync echo (a peer injects a received clip into
+                             # its own clipboard, which would otherwise bounce
+                             # straight back), short enough that deliberately
+                             # re-copying an item later re-syncs instead of being
+                             # silently suppressed forever.
 _SEND_ATTEMPTS = 3           # text delivery retries before giving up
 _SEND_BACKOFF = 0.4          # seconds between attempts (grows per round)
 
@@ -721,7 +727,8 @@ class SyncEngine:
     # -- seen-hash LRU ---------------------------------------------------
     def _seen_has(self, h: str) -> bool:
         with self._lock:
-            return h in self._seen
+            ts = self._seen.get(h)
+            return ts is not None and (time.time() - ts) < _SEEN_TTL
 
     def _seen_add(self, h: str) -> None:
         with self._lock:
