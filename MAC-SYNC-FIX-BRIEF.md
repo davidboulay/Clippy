@@ -63,36 +63,50 @@ no longer "seen"); selftest + drift + delivery are all green in CI.
 
 ## What we need from the macOS session
 
-1. **Pull `main`** (has PR #20). Confirm `clippy/sync.py` has `_SEEN_TTL`.
-2. **Sanity-check macOS sync** with the fix:
+1. **Pull `main`** (has PR #20 + PR #22). Confirm `clippy/sync.py` has `_SEEN_TTL`
+   and `clippy/storage.py` has `paste_path`.
+2. **Sanity-check macOS sync** with the `_seen` fix:
    - Fresh copy Mac→Linux and Linux→Mac still works.
    - **Re-copy** the *same* item after ~a minute → it syncs again (the bug).
    - No echo storm / duplicate loop (copy once, confirm it lands once — the 30 s
      window still suppresses the immediate bounce). The mac changeCount watcher
      already ignores our own writes, so this should be clean.
-3. **Bump `clippy/__init__.py` `__version__` to `1.4.2`** via a PR (protected
+3. **Adopt `storage.paste_path` in the macOS paste path** (PR #22, small):
+   when the user selects a *file* tile, paste `storage.paste_path(entry)` instead
+   of the raw blob path (`entry.image_path`). Without this, pasted files on macOS
+   carry their content-hash name (e.g. `9284ed4f….csv`) instead of the original.
+   Find where `mac_panel` puts a file back on the pasteboard (the file-kind branch
+   of its paste/activate handler) and swap in the helper (fall back to
+   `entry.image_path` if it returns `None`). One line, shared helper already on
+   `main`.
+4. **Bump `clippy/__init__.py` `__version__` to `1.4.2`** via a PR (protected
    `main`: branch → PR → required `test` check → self-merge).
-4. **Tag and push `v1.4.2`** — the release workflow builds the Linux `.deb` **and**
+5. **Tag and push `v1.4.2`** — the release workflow builds the Linux `.deb` **and**
    the macOS `.dmg` and publishes the GitHub release. The user then reinstalls the
-   `.dmg` on the Mac and the fix is live there.
+   `.dmg` on the Mac and the fixes are live there.
 
 ## What `v1.4.2` will include (everything merged since `v1.4.1`)
 
-- **#20** fix(sync): expire the `_seen` cache so re-copied clips sync again ← the reason for this release
+- **#20** fix(sync): expire the `_seen` cache so re-copied clips sync again ← main reason for this release
+- **#22** fix: paste files under their original name, not the content-hash blob (the `paste_path` helper above)
 - **#18** fix(mac): received-clip sound (`_on_received` callback)
 - **#17** feat(linux): live-refresh the open panel when clips arrive
-- **#16** fix(mac): live-refresh the open panel when clips arrive
+- **#16** fix(mac): live-refresh the open panel when clips arrive ← **this already fixes the "Mac panel doesn't update while open" report**; no extra work, it just needs to ship
 - **#15** fix(sync): retry + try-both-addresses delivery (intermittent drops)
 - **#13/#14/#19** docs/screenshot housekeeping
+
+## Two user reports this release closes
+
+- *"Pasting a file on the Mac gives a random string, not the original name."* →
+  fixed by adopting `storage.paste_path` in the mac paste path (step 3 above).
+- *"The Mac doesn't update tiles while the panel is open; I have to close and
+  reopen."* → **already fixed on `main` by PR #16** (the 0.6 s `refreshTick:`
+  timer in `mac_panel`). It's simply not in the v1.4.1 build the user runs, so it
+  goes live with v1.4.2. Nothing to write — just verify it works in the build.
 
 ## Notes / process
 
 - `main` is protected: PRs + the required `test` CI check, no direct pushes.
 - Commit trailer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
-- Don't redesign anything — the fix is intentionally minimal. Just verify on
-  macOS, bump, tag.
-- Cosmetic, separate, **not** blocking this release: a recovered/synced *file*
-  pastes with its content-hash blob name (e.g. `a8525b….txt`) rather than the
-  original filename, on **both** platforms (blobs are stored as `<sha256><ext>`).
-  Worth a future polish PR (carry `entry.filename` through paste), but unrelated
-  to the sync bug.
+- Don't redesign anything — the fixes are intentionally minimal. Verify on macOS,
+  wire `paste_path` into the mac paste path, bump, tag.
