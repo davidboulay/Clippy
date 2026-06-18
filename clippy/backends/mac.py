@@ -104,6 +104,9 @@ class MacBackend:
         self._pb.setData_forType_(nsdata, uti)
         self._last_change = self._pb.changeCount()
 
+    def mirror_to_x11(self, mime: str, data: bytes) -> None:
+        return None  # X11 has no meaning on macOS
+
     # -- files ----------------------------------------------------------
     def read_file_paths(self, types: List[str]) -> List[str]:
         import os

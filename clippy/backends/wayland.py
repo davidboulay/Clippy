@@ -106,6 +106,37 @@ class WaylandBackend:
         subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
         self._x11_mirror(mime, data)
 
+    def mirror_to_x11(self, mime: str, data: bytes) -> None:
+        """Publish freshly-*captured* bytes to the X11 clipboard so XWayland apps
+        can paste them too. The compositor already bridges text both ways, but not
+        image (or file) selections — so this covers exactly that gap, which is why
+        ``copy_text`` deliberately doesn't mirror while ``copy_image`` does.
+
+        Idempotent: skipped when X11 already holds these exact bytes. That guard
+        does double duty — it breaks the Wayland<->X11 echo loop (Xwayland
+        re-publishes whatever we put on X11 back onto the Wayland selection, which
+        fires ``wl-paste --watch`` and re-enters capture), and it avoids yanking
+        the selection away from an app that copied on the X11 side to begin with.
+        Best-effort: no $DISPLAY or no xclip → native-Wayland paste still works."""
+        import os
+        if not os.environ.get("DISPLAY") or shutil.which("xclip") is None:
+            return
+        if self._x11_has(mime, data):
+            return
+        self._x11_mirror(mime, data)
+
+    @staticmethod
+    def _x11_has(mime: str, data: bytes) -> bool:
+        """True if the X11 clipboard already serves exactly `data` for `mime`."""
+        try:
+            cur = subprocess.run(
+                ["xclip", "-selection", "clipboard", "-t", mime, "-o"],
+                capture_output=True, timeout=10,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return False
+        return cur.returncode == 0 and cur.stdout == data
+
     @staticmethod
     def _x11_mirror(mime: str, data: bytes) -> None:
         """Also place `data` on the X11 (XWayland) clipboard via xclip, served by
