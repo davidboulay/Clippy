@@ -192,8 +192,10 @@ class SettingsController(NSObject):
         y = H - 40   # keep the rest of the layout exactly where it was
 
         y -= 64
-        view.addSubview_(_button("Check for updates", 20, y, 180, 28,
-                                 self, b"checkUpdates:"))
+        self._update_res = None        # last UpdateResult (set by checkUpdates_)
+        self.update_btn = _button("Check for updates", 20, y, 180, 28,
+                                   self, b"checkUpdates:")
+        view.addSubview_(self.update_btn)
         self.update_status = _label("", 210, y + 4, 210, 18, size=11)
         view.addSubview_(self.update_status)
 
@@ -397,15 +399,72 @@ class SettingsController(NSObject):
 
         def work():
             try:
-                res = updates.check()
-                msg = (f"Update available: {res.latest}" if res.update_available
-                       else f"Up to date ({updates.current_version()})")
+                self._update_res = updates.check()
             except Exception:
-                msg = "Couldn't check (offline?)"
+                self._update_res = None
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                b"setUpdateStatus:", msg, False)
+                b"applyUpdate", None, False)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def applyUpdate(self):
+        """Reflect the check result: if an update exists, turn the button into a
+        one-click 'Download <ver>' (no auto-installer on macOS — the .dmg can't
+        self-replace a running app; we fetch it and open it for the user)."""
+        res = self._update_res
+        if res is None:
+            self.update_status.setStringValue_("Couldn't check (offline?)")
+            return
+        if res.update_available:
+            self.update_status.setStringValue_(f"Update available: {res.latest}")
+            self.update_btn.setTitle_(f"Download {res.latest}")
+            self.update_btn.setAction_(b"installUpdate:")
+        else:
+            self.update_status.setStringValue_(f"Up to date ({updates.current_version()})")
+            self.update_btn.setTitle_("Check for updates")
+            self.update_btn.setAction_(b"checkUpdates:")
+
+    def installUpdate_(self, sender):
+        res = self._update_res
+        if res is None:
+            return
+        if not getattr(res, "dmg_url", None):
+            self._open_url(res.url)        # no .dmg asset — open the release page
+            return
+        self.update_status.setStringValue_("Downloading update…")
+        self.update_btn.setEnabled_(False)
+
+        def work():
+            try:
+                self._dmg_path = updates.download_dmg(res.dmg_url)
+            except Exception:
+                self._dmg_path = None
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                b"dmgReady", None, False)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def dmgReady(self):
+        self.update_btn.setEnabled_(True)
+        path = getattr(self, "_dmg_path", None)
+        if not path:
+            self.update_status.setStringValue_("Download failed — opening release page")
+            self._open_url(self._update_res.url)
+            return
+        self.update_status.setStringValue_("Opening installer — drag Clippy to Applications.")
+        import subprocess
+        try:
+            subprocess.Popen(["/usr/bin/open", path])    # mounts the .dmg in Finder
+        except Exception:
+            self._open_url(self._update_res.url)
+
+    def _open_url(self, url):
+        try:
+            from AppKit import NSWorkspace
+            from Foundation import NSURL
+            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
+        except Exception:
+            pass
 
     def toggleAuto_(self, sender):
         settings.set_value("auto_check_updates", bool(self.auto_cb.state()))
