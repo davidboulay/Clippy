@@ -29,6 +29,7 @@ class UpdateResult:
     update_available: bool
     error: Optional[str] = None    # human-readable reason the check failed
     deb_url: Optional[str] = None  # direct .deb download, if the release has one
+    dmg_url: Optional[str] = None  # direct .dmg download (macOS), if present
 
 
 def _parse(version: str) -> Tuple[int, ...]:
@@ -74,19 +75,34 @@ def check(timeout: float = 8.0) -> UpdateResult:
     latest = tag.lstrip("vV")
     url = data.get("html_url") or RELEASES_PAGE
     available = _parse(latest) > _parse(__version__)
+    assets = data.get("assets") or []
     deb_url = next(
-        (a.get("browser_download_url") for a in (data.get("assets") or [])
+        (a.get("browser_download_url") for a in assets
          if str(a.get("name", "")).endswith(".deb")),
         None,
     )
-    return UpdateResult(latest, url, available, deb_url=deb_url)
+    dmg_url = next(
+        (a.get("browser_download_url") for a in assets
+         if str(a.get("name", "")).endswith(".dmg")),
+        None,
+    )
+    return UpdateResult(latest, url, available, deb_url=deb_url, dmg_url=dmg_url)
 
 
 def download_deb(deb_url: str, timeout: float = 180.0) -> str:
     """Download a release .deb to a temp file and return its path."""
-    fd, path = tempfile.mkstemp(prefix="clippy-update-", suffix=".deb")
+    return _download(deb_url, ".deb", timeout)
+
+
+def download_dmg(dmg_url: str, timeout: float = 300.0) -> str:
+    """Download a release .dmg (macOS) to a temp file and return its path."""
+    return _download(dmg_url, ".dmg", timeout)
+
+
+def _download(url: str, suffix: str, timeout: float) -> str:
+    fd, path = tempfile.mkstemp(prefix="clippy-update-", suffix=suffix)
     os.close(fd)
-    req = urllib.request.Request(deb_url, headers={"User-Agent": f"Clippy/{__version__}"})
+    req = urllib.request.Request(url, headers={"User-Agent": f"Clippy/{__version__}"})
     with urllib.request.urlopen(req, timeout=timeout) as resp, open(path, "wb") as fh:
         shutil.copyfileobj(resp, fh)
     return path
