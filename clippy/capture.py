@@ -32,12 +32,22 @@ def capture_current():
         name = os.path.basename(src) or "file"
         mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
         new_id = storage.add_file_from_path(src, name, mime)
+        # Mirror to X11 so XWayland apps can paste the file too — the compositor
+        # bridges text both ways but not file/image selections.
+        import urllib.request
+        clipboard.mirror_to_x11(
+            "text/uri-list",
+            ("file://" + urllib.request.pathname2url(src) + "\r\n").encode("utf-8"),
+        )
     elif clipboard.pick_image_type(types):
         # Image DATA copied from an app (e.g. Copy Image), no file involved.
         image_mime = clipboard.pick_image_type(types)
         data = clipboard.read_bytes(image_mime)
         if data:
             new_id = storage.add_image(data, image_mime)
+            # Push the image to the X11 clipboard too; native-Wayland paste
+            # already works via the wl-copy that produced this copy.
+            clipboard.mirror_to_x11(image_mime, data)
     else:
         text_mime = clipboard.pick_text_type(types)
         if text_mime:

@@ -193,11 +193,48 @@ def _chime() -> List[float]:
     return _finalize(_air(s, 0.22), 0.44)
 
 
+def _soft() -> List[float]:
+    """A muted, rounded blip — the most discreet option: a low-passed sine that
+    settles quickly, almost a soft 'thut'."""
+    n = int(_RATE * 0.07)
+    body = _glide(n, 360, 205, 0.03, _expdec(0.03, 0.003))
+    return _finalize(_air(_lowpass(body, 1500), 0.1), 0.4)
+
+
+def _key() -> List[float]:
+    """A soft mechanical key press — a short damped tick over a tiny 'thock',
+    like a quiet laptop keyboard."""
+    n = int(_RATE * 0.05)
+    tick = _noise(int(_RATE * 0.010), _expdec(0.0035, 0.0004), hp=1300, lp=5200)
+    thock = _glide(n, 210, 95, 0.02, _expdec(0.02, 0.001))
+    s = _sat(_mix([0.5 * x for x in tick], [0.7 * x for x in thock]), 1.2)
+    return _finalize(_air(s, 0.08), 0.46)
+
+
+def _bubble() -> List[float]:
+    """A tiny modern bubble — a quick upward blip, playful but discreet."""
+    n = int(_RATE * 0.06)
+    blip = _glide(n, 430, 720, 0.02, _expdec(0.024, 0.0015))
+    return _finalize(_air(_sat(blip, 1.4), 0.12), 0.42)
+
+
+def _marimba() -> List[float]:
+    """A short woody marimba mallet — warm FM with a fast decay."""
+    n = int(_RATE * 0.14)
+    note = _fm(n, 587.0, 1.0, lambda t: 1.6 * math.exp(-t / 0.04) + 0.2,
+               _expdec(0.06, 0.0015))
+    return _finalize(_air(_lowpass(note, 3200), 0.16), 0.44)
+
+
 # Ordered registry: id -> (label, generator). Order drives the settings dropdown.
 _SOUNDS: Dict[str, Tuple[str, Callable[[], List[float]]]] = {
     "tap": ("Tap", _tap),
     "click": ("Click", _click),
     "pop": ("Pop", _pop),
+    "soft": ("Soft", _soft),
+    "key": ("Key", _key),
+    "bubble": ("Bubble", _bubble),
+    "marimba": ("Marimba", _marimba),
     "drop": ("Drop", _drop),
     "ping": ("Ping", _ping),
     "chime": ("Chime", _chime),
