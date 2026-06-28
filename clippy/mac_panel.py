@@ -114,13 +114,13 @@ _TILE_PAD = 10.0            # inner padding within a tile
 _NS_CENTER = 1              # NSTextAlignmentCenter
 _NS_LEFT = 0                # NSTextAlignmentLeft
 _TAB_H = 26.0               # tab-bar row height
-# Mac-local tile size — slightly landscape (more rectangular than the Linux
-# square-ish tile), and a panel height tuned to fit it snugly.
-_TILE_W = 264.0
-_TILE_H = 222.0
-_PANEL_H = 300.0
-_BAND_H = 40.0              # tile header band — tall enough for a large app icon
+# Tile size — portrait, matching the Linux panel's ratio (230x250).
+_TILE_W = 230.0
+_TILE_H = 250.0
+_PANEL_H = 330.0
+_HEADER_H = 24.0           # thin tile header row (type badge + actions), Linux-like
 _SCROLLER_H = 13.0         # reserved strip for the always-visible horizontal bar
+_TAB_REGION = 220.0        # left cluster width for the tabs (search fills the rest)
 
 
 def _color_from_hex(hexstr, alpha=1.0):
@@ -204,6 +204,34 @@ def _app_icon(bundle_id):
     except Exception:
         img = None
     _app_icon_cache[bundle_id] = img
+    return img
+
+
+_logo_cache = []
+
+
+def _app_logo():
+    """The Clippy logo for the panel header (bundled PNG, else a paperclip)."""
+    if _logo_cache:
+        return _logo_cache[0]
+    img = None
+    try:
+        p = config.BUNDLED_ICON
+        if p.exists():
+            img = NSImage.alloc().initByReferencingFile_(str(p))
+            if not (img and img.isValid()):
+                img = None
+    except Exception:
+        img = None
+    if img is None:
+        try:
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "paperclip", "Clippy")
+            if img is not None:
+                img.setTemplate_(True)
+        except Exception:
+            img = None
+    _logo_cache.append(img)
     return img
 
 
@@ -484,59 +512,65 @@ def _make_tile(entry):
     w, h = _TILE_W, _TILE_H
     tile = TileView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
     tile.setWantsLayer_(True)
-    tile.layer().setCornerRadius_(12.0)
-    tile.layer().setMasksToBounds_(True)   # clip the header band to rounded corners
+    tile.layer().setCornerRadius_(10.0)
+    tile.layer().setMasksToBounds_(True)
     tile.layer().setBackgroundColor_(
         NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.92).CGColor())
     tile.layer().setBorderWidth_(0.5)
     tile.layer().setBorderColor_(NSColor.separatorColor().CGColor())
 
-    # Colored header band — color + file-type icon + label vary by file type.
     badge_txt, badge_col, symbol = _category(entry)
-    white = NSColor.whiteColor()
-    white90 = white.colorWithAlphaComponent_(0.92)
-    bh = _BAND_H
-    band = NSView.alloc().initWithFrame_(NSMakeRect(0, h - bh, w, bh))
-    band.setWantsLayer_(True)
-    band.layer().setBackgroundColor_(badge_col.CGColor())
-    tile.addSubview_(band)
+    hh = _HEADER_H
+    hy = h - hh                            # header row sits at the top of the tile
 
-    icon = _symbol_view(symbol, white, 18)
-    icon.setFrame_(NSMakeRect(12, (bh - 18) / 2, 18, 18))
-    band.addSubview_(icon)
+    # Thin header: a small colored dot + the type label (in its category color),
+    # a RICH tag, the source-app icon, then pin / delete — no filled band.
+    dot = NSView.alloc().initWithFrame_(NSMakeRect(12, hy + (hh - 7) / 2, 7, 7))
+    dot.setWantsLayer_(True)
+    dot.layer().setBackgroundColor_(badge_col.CGColor())
+    dot.layer().setCornerRadius_(3.5)
+    tile.addSubview_(dot)
 
-    # delete + pin, flush right on the band (white); wired in reload()
-    del_btn = _action_button("✕", 13, white90)
-    del_btn.setFrame_(NSMakeRect(w - 26, (bh - 22) / 2, 22, 22))
+    # delete + pin, flush right (tinted, readable on the light header)
+    act_col = NSColor.secondaryLabelColor()
+    del_btn = _action_button("✕", 12, act_col)
+    del_btn.setFrame_(NSMakeRect(w - 24, hy + (hh - 20) / 2, 20, 20))
     del_btn.setTag_(entry.id)
-    band.addSubview_(del_btn)
+    tile.addSubview_(del_btn)
     tile._del_btn = del_btn
 
-    pin_btn = _action_button("★" if entry.pinned else "☆", 14, white90)
-    pin_btn.setFrame_(NSMakeRect(w - 50, (bh - 22) / 2, 22, 22))
+    pin_btn = _action_button("★" if entry.pinned else "☆", 13,
+                             badge_col if entry.pinned else act_col)
+    pin_btn.setFrame_(NSMakeRect(w - 44, hy + (hh - 20) / 2, 20, 20))
     pin_btn.setTag_(entry.id)
-    band.addSubview_(pin_btn)
+    tile.addSubview_(pin_btn)
     tile._pin_btn = pin_btn
 
-    # Source-app icon (the app the clip was copied from) — large, left of pin.
+    right = w - 44
     src_img = _app_icon(mac_source.get(entry.id))
-    icon_sz = 28.0
-    src_right = w - 56                     # just left of the pin button
     if src_img is not None:
         siv = NSImageView.alloc().initWithFrame_(
-            NSMakeRect(src_right - icon_sz, (bh - icon_sz) / 2, icon_sz, icon_sz))
+            NSMakeRect(right - 18, hy + (hh - 15) / 2, 15, 15))
         siv.setImage_(src_img)
         siv.setImageScaling_(NSImageScaleProportionallyUpOrDown)
-        band.addSubview_(siv)
-        src_right -= icon_sz + 6
+        tile.addSubview_(siv)
+        right -= 22
 
-    lbl = _attr_label(badge_txt, 11, white, bold=True, tracking=0.8)
-    lbl.setFrame_(NSMakeRect(36, (bh - 16) / 2, max(40.0, src_right - 36 - 36), 16))
-    band.addSubview_(lbl)
     if entry.has_formatting:
-        rich = _attr_label("RICH", 8, white90, bold=True, tracking=0.6)
-        rich.setFrame_(NSMakeRect(src_right - 34, (bh - 13) / 2, 34, 13))
-        band.addSubview_(rich)
+        rich = _attr_label("RICH", 8, NSColor.tertiaryLabelColor(), bold=True, tracking=0.5)
+        rich.setFrame_(NSMakeRect(right - 30, hy + (hh - 12) / 2, 30, 12))
+        tile.addSubview_(rich)
+        right -= 34
+
+    lbl = _attr_label(badge_txt, 10, badge_col, bold=True, tracking=0.7)
+    lbl.setFrame_(NSMakeRect(26, hy + (hh - 14) / 2, max(30.0, right - 26 - 4), 14))
+    tile.addSubview_(lbl)
+
+    # hairline under the header, dividing it from the preview
+    rule = NSView.alloc().initWithFrame_(NSMakeRect(0, hy - 0.5, w, 0.5))
+    rule.setWantsLayer_(True)
+    rule.layer().setBackgroundColor_(NSColor.separatorColor().CGColor())
+    tile.addSubview_(rule)
 
     # footer: the file name for files/images (the preview hides it otherwise),
     # else relative time + size/chars.
@@ -550,9 +584,9 @@ def _make_tile(entry):
     footer.setFrame_(NSMakeRect(_TILE_PAD + 2, _TILE_PAD - 2, w - 2 * _TILE_PAD - 2, 14))
     tile.addSubview_(footer)
 
-    # content preview — fills between the footer and the header band
+    # content preview — fills between the footer and the thin header
     crect = NSMakeRect(_TILE_PAD, _TILE_PAD + 18,
-                       w - 2 * _TILE_PAD, h - bh - 22 - _TILE_PAD)
+                       w - 2 * _TILE_PAD, h - hh - 22 - _TILE_PAD)
     tile.addSubview_(_build_preview(entry, crect))
     return tile
 
@@ -867,30 +901,28 @@ class PanelController(NSObject):
         full_w = 800.0
         sh = 28.0
         row_y = _PANEL_H - _PAD - sh
-        # Top row: a narrow search field on the LEFT, a type-filter button just
-        # to its right, the tab bar CENTERED.
-        sw = 200.0
-        search = NSSearchField.alloc().initWithFrame_(
-            NSMakeRect(_PAD, row_y, sw, sh))
-        search.setFont_(NSFont.systemFontOfSize_(13))
-        search.setDelegate_(self)
-        search.setAutoresizingMask_(4 | 8)     # pinned top-left, fixed size
-        ve.addSubview_(search)
+        # Top row (Linux-like): logo + tabs on the LEFT, a wide search filling the
+        # middle, the type-filter + settings cog on the RIGHT.
 
-        fbtn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(_PAD + sw + 6, row_y + (sh - 26) / 2, 26, 26))
-        fbtn.setBordered_(False)
-        fbtn.setTitle_("")
-        fbtn.setTarget_(self)
-        fbtn.setAction_(b"showTypeFilter:")
-        fbtn.setAutoresizingMask_(4 | 8)       # pinned top-left
-        ve.addSubview_(fbtn)
-        self._filter_btn = fbtn
-        # Left edge of the centered tab cluster must clear search + filter btn.
-        self._tabbar_min_x = _PAD + sw + 6 + 26 + 8
-        self._update_filter_btn()
+        # Clippy logo, far left.
+        logo = NSImageView.alloc().initWithFrame_(
+            NSMakeRect(_PAD, row_y + (sh - 18) / 2, 18, 18))
+        limg = _app_logo()
+        if limg is not None:
+            logo.setImage_(limg)
+            logo.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+        logo.setAutoresizingMask_(8)
+        ve.addSubview_(logo)
 
-        # Settings cog — top-right, level with the search/tab row.
+        # Tab cluster — left-aligned in a fixed-width region; built by _build_tabbar.
+        tab_x = _PAD + 18 + 10
+        tabbar = NSView.alloc().initWithFrame_(
+            NSMakeRect(tab_x, row_y + (sh - _TAB_H) / 2, _TAB_REGION, _TAB_H))
+        tabbar.setAutoresizingMask_(8)         # pinned top-left, fixed
+        ve.addSubview_(tabbar)
+        self._tabbar = tabbar
+
+        # Settings cog — top-right.
         cog = NSButton.alloc().initWithFrame_(
             NSMakeRect(full_w - _PAD - 22, row_y + (sh - 22) / 2, 22, 22))
         cog.setBordered_(False)
@@ -909,12 +941,27 @@ class PanelController(NSObject):
         cog.setAutoresizingMask_(1 | 8)        # pinned top-right
         ve.addSubview_(cog)
 
-        # Tab bar — full-width container; buttons are centered by _build_tabbar().
-        tabbar = NSView.alloc().initWithFrame_(
-            NSMakeRect(0, row_y + (sh - _TAB_H) / 2, full_w, _TAB_H))
-        tabbar.setAutoresizingMask_(2 | 8)     # width-flexible, pinned to top
-        ve.addSubview_(tabbar)
-        self._tabbar = tabbar
+        # Type-filter button — just left of the cog.
+        fbtn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(full_w - _PAD - 22 - 6 - 26, row_y + (sh - 26) / 2, 26, 26))
+        fbtn.setBordered_(False)
+        fbtn.setTitle_("")
+        fbtn.setTarget_(self)
+        fbtn.setAction_(b"showTypeFilter:")
+        fbtn.setAutoresizingMask_(1 | 8)       # pinned top-right
+        ve.addSubview_(fbtn)
+        self._filter_btn = fbtn
+        self._update_filter_btn()
+
+        # Wide search — fills the gap between the tab cluster and the filter btn.
+        search_x = tab_x + _TAB_REGION + 12
+        search_w = (full_w - _PAD - 22 - 6 - 26 - 10) - search_x
+        search = NSSearchField.alloc().initWithFrame_(
+            NSMakeRect(search_x, row_y, search_w, sh))
+        search.setFont_(NSFont.systemFontOfSize_(13))
+        search.setDelegate_(self)
+        search.setAutoresizingMask_(2 | 8)     # width-flexible, pinned to top
+        ve.addSubview_(search)
 
         # Horizontal scroll of tiles below the top row, populated by reload().
         # Full-width (x=0): the tile strip runs flush to both screen edges — no
@@ -1001,7 +1048,7 @@ class PanelController(NSObject):
             tile._pin_btn.setAction_("pinClicked:")
             tile._del_btn.setTarget_(self)
             tile._del_btn.setAction_("deleteClicked:")
-            if e.kind == "text" and e.html:        # right-click → plain-text copy
+            if e.kind == "text":                   # right-click → plain-text copy
                 ctx = NSMenu.alloc().init()
                 mi = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                     "Copy as Plain Text", b"selectEntryPlain:", "")
@@ -1254,7 +1301,7 @@ class PanelController(NSObject):
                 ("pinned", "★ Pinned", NSColor.labelColor())]
         for t in mac_tabs.tabs():
             rows.append((t["name"], "● " + t["name"], _color_from_hex(t.get("color"))))
-        # Build the buttons first (to measure), then lay them out centered.
+        # Build the buttons, then lay them out LEFT-aligned (logo sits to the left).
         btns = []
         for tab_id, label, color in rows:
             tag = len(self._tabids)
@@ -1269,13 +1316,9 @@ class PanelController(NSObject):
         plus.setTitle_("+")
         plus.setTarget_(self)
         plus.setAction_(b"createTab:")
-        gap = 8.0
-        widths = [b.frame().size.width + 18 for b in btns] + [26.0]
-        total = sum(widths) + gap * (len(widths) - 1)
-        cw = self._tabbar.frame().size.width
-        # Centered, but never under the left search field + filter button.
-        min_x = getattr(self, "_tabbar_min_x", 236.0)
-        x = max(min_x + gap, (cw - total) / 2.0)
+        gap = 6.0
+        widths = [b.frame().size.width + 16 for b in btns] + [24.0]
+        x = 0.0
         for b, w in zip(btns + [plus], widths):
             b.setFrame_(NSMakeRect(x, 0, w, _TAB_H))
             self._tabbar.addSubview_(b)
