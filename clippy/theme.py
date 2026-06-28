@@ -154,10 +154,13 @@ def build_css(dark: bool | None = None) -> str:
     border-top: 1px solid {c['border']};
     border-top-left-radius: 16px;
     border-top-right-radius: 16px;
-    padding: 14px 22px 20px 22px;
+    /* No horizontal padding: the tile strip runs edge-to-edge (tiles flush to
+       both screen edges). The header / action-bar / hint re-inset themselves
+       with their own side margins below. */
+    padding: 14px 0 20px 0;
 }}
 
-.header {{ margin-bottom: 8px; }}
+.header {{ margin: 0 22px 8px 22px; }}
 .title {{ color: {c['text']}; font-size: 16px; font-weight: bold; }}
 
 .iconbtn {{
@@ -205,7 +208,7 @@ def build_css(dark: bool | None = None) -> str:
     border: 1px solid {c['border']};
     border-radius: 10px;
     padding: 5px 8px;
-    margin-bottom: 6px;
+    margin: 0 22px 6px 22px;
 }}
 .action-label {{ color: {c['dim']}; font-size: 11px; font-weight: bold; margin-right: 4px; }}
 .action-btn {{
@@ -217,7 +220,11 @@ def build_css(dark: bool | None = None) -> str:
 .action-btn.danger {{ color: {c['danger']}; }}
 
 .strip {{ background-color: transparent; }}
-.strip-inner {{ padding: 4px 8px 10px 8px; }}
+/* The scrolled window itself is full screen width (no border inset that could
+   mask a tile). The 12px lead-in/trailing gap lives on this inner box — the
+   scroll *content* — so the first tile clears the edge at rest but tiles still
+   slide all the way to the edge as you scroll (the gap scrolls with them). */
+.strip-inner {{ padding: 4px 12px 10px 12px; }}
 
 .tile {{
     background-color: {c['tile']};
@@ -253,7 +260,7 @@ def build_css(dark: bool | None = None) -> str:
 
 .meta {{ color: {c['dim2']}; font-size: 10.5px; margin-top: 4px; }}
 .empty {{ color: {c['dim']}; font-size: 14px; }}
-.hint {{ color: {c['dim2']}; font-size: 11px; margin-top: 6px; }}
+.hint {{ color: {c['dim2']}; font-size: 11px; margin: 6px 22px 0 22px; }}
 
 scrollbar {{ background-color: transparent; }}
 scrollbar slider {{ background-color: {c['dim2']}; border-radius: 8px; min-width: 40px; }}

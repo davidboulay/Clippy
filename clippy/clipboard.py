@@ -53,6 +53,10 @@ def copy_image(data: bytes, mime: str) -> None:
     get_backend().copy_image(data, mime)
 
 
+def mirror_to_x11(mime: str, data: bytes) -> None:
+    get_backend().mirror_to_x11(mime, data)
+
+
 def read_file_paths(types: List[str]) -> List[str]:
     return get_backend().read_file_paths(types)
 

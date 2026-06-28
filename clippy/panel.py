@@ -25,6 +25,88 @@ from .storage import Entry
 _FIRST_BATCH = 12   # tiles built synchronously, before the window appears
 _STREAM_CHUNK = 12  # tiles appended per idle tick after the window is up
 
+_THUMB_PX = 256     # target size for rendered file thumbnails (PDF/docs/…)
+_thumbnailers_cache = None   # parsed freedesktop .thumbnailer entries (lazy)
+
+
+def _thumbnailers():
+    """Parsed freedesktop thumbnailers: list of (mime_set, exec_template).
+
+    Reads ``*.thumbnailer`` files from the standard dirs once. These map a MIME
+    type to a command (``Exec=… %s %u %o``) that renders a thumbnail PNG — the
+    same registry the file manager uses (evince for PDF/PS/DjVu, etc.)."""
+    global _thumbnailers_cache
+    if _thumbnailers_cache is not None:
+        return _thumbnailers_cache
+    import configparser
+    import glob
+    import os
+    dirs = [os.path.join(d, "thumbnailers")
+            for d in (os.environ.get("XDG_DATA_HOME",
+                                     os.path.expanduser("~/.local/share")),
+                      "/usr/share", "/usr/local/share")]
+    entries = []
+    for d in dirs:
+        for path in glob.glob(os.path.join(d, "*.thumbnailer")):
+            try:
+                cp = configparser.ConfigParser(interpolation=None)
+                cp.read(path)
+                sec = cp["Thumbnailer Entry"]
+                mimes = {m.strip().lower()
+                         for m in sec.get("MimeType", "").split(";") if m.strip()}
+                exec_tmpl = sec.get("Exec", "")
+                if mimes and exec_tmpl:
+                    entries.append((mimes, exec_tmpl))
+            except (OSError, KeyError, configparser.Error):
+                continue
+    _thumbnailers_cache = entries
+    return entries
+
+
+def _thumbnailer_for(mime: str):
+    mime = (mime or "").split(";")[0].strip().lower()
+    if not mime:
+        return None
+    for mimes, exec_tmpl in _thumbnailers():
+        if mime in mimes:
+            return exec_tmpl
+    return None
+
+
+def _generate_file_thumb(path: str, out: str, mime: str, ext: str) -> bool:
+    """Render a thumbnail PNG for a non-image/video file to ``out``. PDFs go
+    through poppler (always present-ish, reliable); everything else through a
+    registered freedesktop thumbnailer. Best-effort: returns whether ``out``
+    was produced. Runs off the UI thread."""
+    import os
+    import shlex
+    import shutil
+    import subprocess
+    import urllib.request
+    try:
+        config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
+        if mime == "application/pdf" or ext == "pdf":
+            if not shutil.which("pdftoppm"):
+                return False
+            prefix = out[:-4] if out.endswith(".png") else out  # pdftoppm adds .png
+            subprocess.run(
+                ["pdftoppm", "-png", "-singlefile", "-f", "1",
+                 "-scale-to", str(_THUMB_PX), path, prefix],
+                capture_output=True, timeout=12,
+            )
+            return os.path.exists(out)
+        tmpl = _thumbnailer_for(mime)
+        if not tmpl:
+            return False
+        uri = "file://" + urllib.request.pathname2url(path)
+        cmd = [tok.replace("%s", str(_THUMB_PX)).replace("%o", out)
+                  .replace("%i", path).replace("%u", uri)
+               for tok in shlex.split(tmpl)]
+        subprocess.run(cmd, capture_output=True, timeout=12)
+        return os.path.exists(out)
+    except (subprocess.SubprocessError, OSError):
+        return False
+
 
 def _relative_time(ts: float) -> str:
     delta = max(0, int(time.time() - ts))
@@ -104,7 +186,10 @@ class Tile(Gtk.EventBox):
         footer.set_xalign(0.0)
         footer.get_style_context().add_class("meta")
         footer.set_text(self._meta_text(entry))
-        footer.set_ellipsize(Pango.EllipsizeMode.END)
+        # File footers lead with the filename — truncate in the middle so the
+        # extension stays visible (matches macOS); other footers ellipsize END.
+        footer.set_ellipsize(Pango.EllipsizeMode.MIDDLE if entry.is_file
+                             else Pango.EllipsizeMode.END)
         card.pack_start(footer, False, False, 0)
 
         self.set_size_request(config.TILE_WIDTH, config.TILE_HEIGHT)
@@ -182,11 +267,50 @@ class Tile(Gtk.EventBox):
                 img = self._load_image(thumb)
                 if img is not None:
                     return img
-            return self._file_card(name, "VIDEO")
-        # Any other file: a clean type card instead of the raw filename text.
+            return self._file_card("VIDEO")
         if entry.is_file:
-            return self._file_card(name, ext.upper() or "FILE")
+            # Text-like files (csv/txt/…): show a snippet of the content — no
+            # system thumbnailer renders these, but the bytes are right here.
+            if mime.startswith("text/"):
+                snip = self._text_snippet(path)
+                if snip is not None:
+                    return snip
+            # Other files (PDF, office docs, …): a rendered thumbnail, cached on
+            # disk and warmed in the background. Show a type card until it lands.
+            key = entry.hash or os.path.basename(path)
+            cached = self._file_thumb_cached(key)
+            if cached:
+                img = self._load_image(cached)
+                if img is not None:
+                    return img
+            self._panel._warm_file_thumb(path, key, mime, ext)
+            return self._file_card(ext.upper() or "FILE")
         return None
+
+    @staticmethod
+    def _file_thumb_cached(key: str) -> Optional[str]:
+        import os
+        out = config.THUMB_DIR / f"{os.path.basename(key)}.png"
+        return str(out) if out.exists() else None
+
+    def _text_snippet(self, path: str) -> Optional[Gtk.Widget]:
+        try:
+            with open(path, "rb") as f:
+                text = f.read(2048).decode("utf-8", "replace")
+        except OSError:
+            return None
+        if not text.strip():
+            return None
+        lbl = Gtk.Label(label=text)
+        lbl.set_xalign(0.0)
+        lbl.set_yalign(0.0)
+        lbl.set_line_wrap(True)
+        lbl.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        lbl.set_max_width_chars(30)
+        lbl.set_lines(10)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.get_style_context().add_class("preview-text")
+        return lbl
 
     @staticmethod
     def _video_thumb(path: str, key: str) -> Optional[str]:
@@ -210,7 +334,7 @@ class Tile(Gtk.EventBox):
             return None
         return str(out) if out.exists() else None
 
-    def _file_card(self, name: str, label: str) -> Gtk.Widget:
+    def _file_card(self, label: str) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_halign(Gtk.Align.CENTER)
         box.set_valign(Gtk.Align.CENTER)
@@ -218,12 +342,8 @@ class Tile(Gtk.EventBox):
         kind.get_style_context().add_class("badge")
         kind.get_style_context().add_class("badge-text")
         box.pack_start(kind, False, False, 0)
-        fn = Gtk.Label(label=name or "file")
-        fn.set_max_width_chars(24)
-        fn.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-        fn.set_justify(Gtk.Justification.CENTER)
-        fn.get_style_context().add_class("preview-text")
-        box.pack_start(fn, False, False, 0)
+        # The filename now lives in the tile footer (_meta_text), so the card is
+        # just a type placeholder — no redundant name label here.
         return box
 
     def _meta_text(self, entry: Entry) -> str:
@@ -232,6 +352,11 @@ class Tile(Gtk.EventBox):
             sz = entry.size or 0
             human = (f"{sz / 1024 / 1024:.1f} MB" if sz >= 1024 * 1024
                      else f"{max(1, sz // 1024)} KB")
+            # Files render a thumbnail/snippet instead of a name card, so the
+            # footer carries the filename (matches macOS: name only, middle-
+            # truncated by the caller so the extension stays visible).
+            if entry.is_file and entry.filename:
+                return entry.filename
             return f"{when}  ·  {human}"
         text = entry.text or ""
         lines = text.count("\n") + 1
@@ -287,6 +412,10 @@ class Panel:
         # show up without a close/reopen. _refresh_source is the timer id.
         self._refresh_source = None
         self._last_sig = None
+        # Background file-thumbnail warming: keys currently rendering, plus a
+        # one-shot debounced reload so a burst of finished thumbs rebuilds once.
+        self._thumb_pending: set = set()
+        self._thumb_reload_scheduled = False
 
         # Non-modal bottom strip: the window *is* the panel (no full-screen
         # backdrop), so the COSMIC panel and other apps stay clickable. Click-
@@ -1177,6 +1306,38 @@ class Panel:
         if self._tiles and prev > 0:
             self._selected = min(prev, len(self._tiles) - 1)
             self._refresh_selection()
+
+    # -- background file thumbnails ---------------------------------------
+    def _warm_file_thumb(self, path: str, key: str, mime: str, ext: str) -> None:
+        """Render a file's thumbnail off the UI thread; when it lands, rebuild so
+        the type card is replaced by the preview. Deduped per key."""
+        import os
+        import threading
+        if key in self._thumb_pending:
+            return
+        self._thumb_pending.add(key)
+        out = str(config.THUMB_DIR / f"{os.path.basename(key)}.png")
+
+        def work():
+            ok = _generate_file_thumb(path, out, mime, ext)
+            GLib.idle_add(self._thumb_ready, key, ok)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _thumb_ready(self, key: str, ok: bool) -> bool:
+        self._thumb_pending.discard(key)
+        # Coalesce a burst of finished thumbs into a single rebuild while open.
+        if ok and self._visible and not self._thumb_reload_scheduled:
+            self._thumb_reload_scheduled = True
+            GLib.timeout_add(250, self._do_thumb_reload)
+        return False
+
+    def _do_thumb_reload(self) -> bool:
+        self._thumb_reload_scheduled = False
+        if self._visible:
+            # Cached thumbs now short-circuit the warm path, so this won't loop.
+            self._reload_preserving_selection()
+        return False
 
     def toggle(self) -> None:
         self.hide() if self._visible else self.show()

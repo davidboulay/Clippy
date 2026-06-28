@@ -86,8 +86,9 @@ sudo apt install ./clippy_*.deb
 Dependencies (handled by the `.deb`): `wl-clipboard`, `python3-gi`,
 `gir1.2-gtk-3.0`, `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
 `gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
-plus `python3-nacl` + `python3-zeroconf` for sync (`ffmpeg` optional for video
-thumbnails; `xclip` optional, to paste images/files into XWayland apps).
+plus `python3-nacl` + `python3-zeroconf` for sync (`poppler-utils` for PDF
+thumbnails — pulled in via Recommends; `ffmpeg` optional for video thumbnails;
+`xclip` optional, to paste images/files into XWayland apps).
 
 #### Set the Linux shortcut
 
