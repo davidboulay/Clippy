@@ -252,10 +252,29 @@ class SettingsWindow:
                 engine.unpair(peer["id"])
             self._refresh_peers()
 
+    def _screen_cap(self) -> int:
+        """A height cap so the window never exceeds the screen: ~88% of the
+        monitor work area (falls back to a sane default)."""
+        try:
+            disp = Gdk.Display.get_default()
+            mon = disp.get_primary_monitor() or disp.get_monitor(0)
+            return max(360, int(mon.get_workarea().height * 0.88))
+        except Exception:
+            return 720
+
     def _build(self):
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.get_style_context().add_class("settings-body")
-        self.window.add(body)
+        # Scroll the content so the window fits short screens: it sizes to the
+        # content's natural height but is capped to the screen, after which the
+        # sections scroll (the Sync list grows per paired device).
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_propagate_natural_width(True)
+        scroller.set_max_content_height(self._screen_cap())
+        scroller.add(body)
+        self.window.add(scroller)
 
         title = Gtk.Label(label="Clippy Settings")
         title.set_xalign(0.0)
