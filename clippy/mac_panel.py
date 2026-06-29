@@ -511,13 +511,7 @@ def _text_dialog(title, default):
 def _make_tile(entry):
     w, h = _TILE_W, _TILE_H
     tile = TileView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
-    tile.setWantsLayer_(True)
-    tile.layer().setCornerRadius_(10.0)
-    tile.layer().setMasksToBounds_(True)
-    tile.layer().setBackgroundColor_(
-        NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.92).CGColor())
-    tile.layer().setBorderWidth_(0.5)
-    tile.layer().setBorderColor_(NSColor.separatorColor().CGColor())
+    tile.setWantsLayer_(True)              # card fill/corner set in TileView.updateLayer
 
     badge_txt, badge_col, symbol = _category(entry)
     hh = _HEADER_H
@@ -525,10 +519,8 @@ def _make_tile(entry):
 
     # Thin header: a small colored dot + the type label (in its category color),
     # a RICH tag, the source-app icon, then pin / delete — no filled band.
-    dot = NSView.alloc().initWithFrame_(NSMakeRect(12, hy + (hh - 7) / 2, 7, 7))
-    dot.setWantsLayer_(True)
-    dot.layer().setBackgroundColor_(badge_col.CGColor())
-    dot.layer().setCornerRadius_(3.5)
+    dot = _ColorBox.alloc().initWithColor_radius_frame_(
+        badge_col, 3.5, NSMakeRect(12, hy + (hh - 7) / 2, 7, 7))
     tile.addSubview_(dot)
 
     # delete + pin, flush right (tinted, readable on the light header)
@@ -567,9 +559,8 @@ def _make_tile(entry):
     tile.addSubview_(lbl)
 
     # hairline under the header, dividing it from the preview
-    rule = NSView.alloc().initWithFrame_(NSMakeRect(0, hy - 0.5, w, 0.5))
-    rule.setWantsLayer_(True)
-    rule.layer().setBackgroundColor_(NSColor.separatorColor().CGColor())
+    rule = _ColorBox.alloc().initWithColor_radius_frame_(
+        NSColor.separatorColor(), 0, NSMakeRect(0, hy - 0.5, w, 0.5))
     tile.addSubview_(rule)
 
     # footer: the file name for files/images (the preview hides it otherwise),
@@ -780,9 +771,43 @@ def parse_shortcut(spec):
 
 
 # -- a clickable tile card ------------------------------------------------
+class _ColorBox(NSView):
+    """A layer-backed rectangle whose fill re-resolves on dark/light switches.
+    AppKit calls updateLayer in the correct appearance context, so a dynamic
+    NSColor (separatorColor, systemTealColor, …) recolors automatically; a fixed
+    brand color (from hex) stays put, as intended."""
+
+    def initWithColor_radius_frame_(self, color, radius, frame):  # noqa: N802
+        self = objc.super(_ColorBox, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._ns = color
+        self.setWantsLayer_(True)
+        if radius:
+            self.layer().setCornerRadius_(radius)
+        return self
+
+    def wantsUpdateLayer(self):          # noqa: N802
+        return True
+
+    def updateLayer(self):               # noqa: N802
+        self.layer().setBackgroundColor_(self._ns.CGColor())
+
+
 class TileView(NSView):
     """One history entry's card. The whole card is a single click target
     (subviews don't intercept); clicking loads the entry onto the clipboard."""
+
+    def wantsUpdateLayer(self):          # noqa: N802
+        return True
+
+    def updateLayer(self):               # noqa: N802 — re-resolves the card fill in
+        lay = self.layer()               # the *current* appearance (fixes dark/light)
+        lay.setCornerRadius_(10.0)
+        lay.setMasksToBounds_(True)
+        lay.setBackgroundColor_(
+            NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.92).CGColor())
+        # border is owned by _set_selection (accent when selected, else none)
 
     def hitTest_(self, point):          # noqa: N802 — collapse hits to the card,
         hit = objc.super(TileView, self).hitTest_(point)   # except the action buttons
@@ -800,6 +825,26 @@ class TileView(NSView):
 
 
 # -- the panel window -----------------------------------------------------
+class ClippyEffectView(NSVisualEffectView):
+    """Panel background that rebuilds the tiles/tabs when the system flips between
+    dark and light. Their colors are baked at creation (attributed-string label
+    colors and layer CGColor snapshots don't auto-re-resolve), so a rebuild is
+    what re-applies the new appearance — the same path that makes them correct at
+    launch."""
+
+    def viewDidChangeEffectiveAppearance(self):  # noqa: N802 (Cocoa selector)
+        try:
+            objc.super(ClippyEffectView, self).viewDidChangeEffectiveAppearance()
+        except Exception:
+            pass
+        ctrl = getattr(self, "_panel_ctrl", None)
+        if ctrl is not None:
+            try:
+                ctrl.handleAppearanceChange()
+            except Exception:
+                pass
+
+
 class ClippyPanel(NSPanel):
     """Borderless non-activating panel that can still take keyboard focus."""
 
@@ -892,7 +937,8 @@ class PanelController(NSObject):
         panel.setLevel_(_panel_level())
 
         # Light/dark-adaptive blurred background — square corners (flush bar).
-        ve = NSVisualEffectView.alloc().initWithFrame_(rect)
+        ve = ClippyEffectView.alloc().initWithFrame_(rect)
+        ve._panel_ctrl = self                  # so it can rebuild on appearance flips
         ve.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
         ve.setState_(NSVisualEffectStateActive)
         ve.setMaterial_(_visual_material())
@@ -1002,6 +1048,17 @@ class PanelController(NSObject):
         self._scroll = scroll
         self._doc = doc
         self._build_tabbar()
+
+    def handleAppearanceChange(self):
+        """System dark/light flipped — rebuild so the tabs/tiles pick up the new
+        appearance (their baked label/layer colors don't re-resolve on their own)."""
+        self._last_sig = None              # force a rebuild on the next show if hidden
+        try:
+            if self._panel is not None and self._panel.isVisible():
+                self._build_tabbar()
+                self.reload()
+        except Exception:
+            pass
 
     # -- tiles -----------------------------------------------------------
     def reload(self):
