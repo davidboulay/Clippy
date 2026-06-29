@@ -253,12 +253,15 @@ class SettingsWindow:
             self._refresh_peers()
 
     def _screen_cap(self) -> int:
-        """A height cap so the window never exceeds the screen: ~88% of the
-        monitor work area (falls back to a sane default)."""
+        """A height cap so the window fits on *any* monitor: ~88% of the
+        smallest monitor's work area. Wayland places (and lets the user drag)
+        the window on any output and the app can't reposition it, so capping to
+        the smallest screen is what guarantees it never runs off-screen."""
         try:
             disp = Gdk.Display.get_default()
-            mon = disp.get_primary_monitor() or disp.get_monitor(0)
-            return max(360, int(mon.get_workarea().height * 0.88))
+            heights = [disp.get_monitor(i).get_workarea().height
+                       for i in range(disp.get_n_monitors())]
+            return max(360, int(min(heights) * 0.88))
         except Exception:
             return 720
 
@@ -273,6 +276,9 @@ class SettingsWindow:
         scroller.set_propagate_natural_height(True)
         scroller.set_propagate_natural_width(True)
         scroller.set_max_content_height(self._screen_cap())
+        # A conventional inset scrollbar in its own gutter, not the overlay
+        # scrollbar that expands as a big translucent bar on top of the content.
+        scroller.set_overlay_scrolling(False)
         scroller.add(body)
         self.window.add(scroller)
 

@@ -262,8 +262,25 @@ def build_css(dark: bool | None = None) -> str:
 .empty {{ color: {c['dim']}; font-size: 14px; }}
 .hint {{ color: {c['dim2']}; font-size: 11px; margin: 6px 22px 0 22px; }}
 
-scrollbar {{ background-color: transparent; }}
-scrollbar slider {{ background-color: {c['dim2']}; border-radius: 8px; min-width: 40px; }}
+/* COSMIC-like scrollbar: a slim, rounded, theme-adaptive bar (no stepper
+   arrows, transparent trough). The 3px transparent border + padding-box clip
+   keeps the visible slider thin while leaving an easy grab target; colours come
+   from the live palette so it follows light/dark. */
+scrollbar {{ background-color: transparent; border: none; }}
+scrollbar button {{ min-width: 0; min-height: 0; }}
+scrollbar trough {{ background-color: transparent; border: none; border-radius: 10px; margin: 2px; }}
+scrollbar slider {{
+    background-color: {c['dim']};
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 10px;
+    min-width: 10px;
+    min-height: 10px;
+}}
+scrollbar.vertical slider {{ min-height: 32px; }}
+scrollbar.horizontal slider {{ min-width: 32px; }}
+scrollbar slider:hover {{ background-color: {c['text']}; }}
+scrollbar slider:active {{ background-color: {c['accent']}; }}
 
 /* ---- settings window ---- */
 .settings-body {{ background-color: {c['bg']}; padding: 20px 22px; }}
