@@ -445,16 +445,40 @@ class SettingsController(NSObject):
         threading.Thread(target=work, daemon=True).start()
 
     def dmgReady(self):
-        self.update_btn.setEnabled_(True)
         path = getattr(self, "_dmg_path", None)
         if not path:
+            self.update_btn.setEnabled_(True)
             self.update_status.setStringValue_("Download failed — opening release page")
             self._open_url(self._update_res.url)
             return
+        # Stage + spawn the swap/relaunch helper on a thread (hdiutil/ditto are
+        # slow); then quit so the helper can replace the running bundle.
+        self.update_status.setStringValue_("Installing update…")
+
+        def work():
+            try:
+                from . import mac_update
+                self._install_ok, _ = mac_update.install(path)
+            except Exception:
+                self._install_ok = False
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                b"installFinished", None, False)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def installFinished(self):
+        if getattr(self, "_install_ok", False):
+            self.update_status.setStringValue_("Updating — Clippy will relaunch…")
+            from AppKit import NSApp
+            NSApp().performSelector_withObject_afterDelay_(b"terminate:", None, 1.2)
+            return
+        # Couldn't self-update (e.g. running from source) — open the .dmg so the
+        # user can install it manually.
+        self.update_btn.setEnabled_(True)
         self.update_status.setStringValue_("Opening installer — drag Clippy to Applications.")
         import subprocess
         try:
-            subprocess.Popen(["/usr/bin/open", path])    # mounts the .dmg in Finder
+            subprocess.Popen(["/usr/bin/open", self._dmg_path])
         except Exception:
             self._open_url(self._update_res.url)
 
