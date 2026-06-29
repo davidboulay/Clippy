@@ -5,7 +5,32 @@ and by the daemon's one-shot capture at startup. GTK-free on purpose.
 """
 from __future__ import annotations
 
-from . import clipboard, settings, sound, storage
+from . import clipboard, config, settings, sound, storage
+
+# When Clippy mirrors an image/file copy to the X11 clipboard, XWayland
+# re-publishes it onto the Wayland clipboard, which fires wl-paste --watch a
+# second time ~tens of ms later. That re-capture dedups (returns the existing
+# id) and would replay the copy sound. Debounce it: skip the sound if we just
+# played it for the same entry. _store runs as a fresh subprocess per copy, so
+# the last-played id+time is kept in a small state file rather than in memory.
+_SOUND_STATE = config.DATA_DIR / ".last_sound"
+_SOUND_DEBOUNCE = 1.5  # seconds
+
+
+def _should_play_sound(entry_id: int) -> bool:
+    import time
+    now = time.time()
+    try:
+        last_id, last_t = _SOUND_STATE.read_text().split()
+        if int(last_id) == entry_id and now - float(last_t) < _SOUND_DEBOUNCE:
+            return False  # an echo bounce (or sync round-trip) — stay silent
+    except (OSError, ValueError):
+        pass
+    try:
+        _SOUND_STATE.write_text(f"{entry_id} {now}")
+    except OSError:
+        pass
+    return True
 
 
 def capture_current():
@@ -72,7 +97,7 @@ def capture_current():
 
     if new_id is not None:
         prefs = settings.load()
-        if prefs.get("sound_on_copy"):
+        if prefs.get("sound_on_copy") and _should_play_sound(new_id):
             sound.play()
         storage.apply_retention()
     return new_id
