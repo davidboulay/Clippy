@@ -24,3 +24,7 @@ Pasted Image.png
 # macOS Finder metadata
 .DS_Store
 **/.DS_Store
+
+# stray pasted screenshots
+clippy/image.png
+image.png

@@ -58,7 +58,7 @@ on Sway, Hyprland, and other wlroots compositors.
 from the **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**:
 
 ```bash
-sudo apt install ./clippy_1.4.1_all.deb
+sudo apt install ./clippy_1.4.8_all.deb
 ```
 
 …or from the terminal with the GitHub CLI:
@@ -117,6 +117,12 @@ git clone https://github.com/davidboulay/clippy.git && cd clippy
 The build is **ad-hoc signed** (no Apple Developer ID), so the first launch needs
 **right-click → Open** once (or `xattr -dr com.apple.quarantine /Applications/Clippy.app`).
 See [`packaging/macos/README.md`](packaging/macos/README.md).
+
+**Updating:** open **Settings → Check for updates**. When a newer release exists
+the button becomes **Download \<version\>** — clicking it downloads the new
+`.dmg`, swaps the app in place, and relaunches automatically (no manual
+re-download or drag). The Linux `.deb` updates the same way via *Settings →
+Check for updates*.
 
 ## Using the panel
 
