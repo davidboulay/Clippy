@@ -1,11 +1,11 @@
-# Maintainer: David Boulay <david.boulay@lojel.com>
+# Maintainer: David Boulay <89959743+davidboulay@users.noreply.github.com>
 # Builds Clippy from the local repository tree (run `makepkg` from this dir).
 pkgname=clippy
 pkgver=0.2.5
 pkgrel=1
 pkgdesc="Clipboard history panel for Wayland (COSMIC/wlroots)"
 arch=('any')
-url="https://github.com/lojel/clippy"
+url="https://github.com/davidboulay/Clippy"
 license=('MIT')
 depends=('python' 'python-gobject' 'gtk3' 'gtk-layer-shell'
          'libayatana-appindicator' 'wl-clipboard')
