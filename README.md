@@ -54,14 +54,20 @@ Each platform integrates natively:
 Built for **Wayland** — developed on **Pop!_OS 24.04 + COSMIC**, and also works
 on Sway, Hyprland, and other wlroots compositors.
 
-**Ubuntu / Pop!_OS / Debian (recommended)** — download the latest `clippy_*.deb`
-from the **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**:
+**Ubuntu / Pop!_OS / Debian — APT repository (recommended)** — add the repo once,
+then install and get updates with `apt` like any system package:
 
 ```bash
-sudo apt install ./clippy_1.4.8_all.deb
+curl -fsSL https://davidboulay.github.io/Clippy/clippy.gpg | sudo tee /usr/share/keyrings/clippy.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/clippy.gpg] https://davidboulay.github.io/Clippy ./" | sudo tee /etc/apt/sources.list.d/clippy.list
+sudo apt update && sudo apt install clippy
 ```
 
-…or from the terminal with the GitHub CLI:
+New versions then arrive with `sudo apt upgrade`. The repo is GPG-signed and
+served over GitHub Pages.
+
+**Or grab the `.deb` directly** from the
+**[Releases page](https://github.com/davidboulay/clippy/releases/latest)**:
 
 ```bash
 gh release download --repo davidboulay/clippy --pattern '*.deb'
