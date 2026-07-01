@@ -11,7 +11,7 @@ follows you between machines, even across operating systems.
 
 | Linux (Wayland / COSMIC) | macOS |
 |---|---|
-| ![Clippy on Linux](docs/screenshot-linux.png) | ![Clippy on macOS](docs/screenshot-macos.png) |
+| ![Clippy on Linux](docs/screenshot-cosmic.png) | ![Clippy on macOS](docs/screenshot-macos.png) |
 
 ## Features
 
