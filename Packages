@@ -1,0 +1,460 @@
+Package: clippy
+Version: 0.2.0
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 352
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_0.2.0_all.deb
+Size: 66606
+MD5sum: d60ed90a2b19c7c2d1464ff0660150e8
+SHA1: 33018c2e86c8257111781ecdcdd94e3ef9d987a8
+SHA256: cd34df816bfb0adc2808ddbcd395e13bc0743678a51d8e99f86c7f11502173b4
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 0.2.1
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 352
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_0.2.1_all.deb
+Size: 66788
+MD5sum: 08ebb3bb76a1e192446a968be48aff42
+SHA1: 59ac4a18aeb6d7196e721f77021eb63595112d2b
+SHA256: cfea4020d7eebb8db587fc671c783bfa7b70d7c6edcb2731bd2263e6ac60da9c
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 0.2.2
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 352
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_0.2.2_all.deb
+Size: 67178
+MD5sum: 6900ff1cfca86e302db420ae7d6fd835
+SHA1: 3d23e3bee3f363acef58087feeb1fe8fbdb628c2
+SHA256: a936699478aba4b250bc706c564215f788e765948c9e50fa03f7ca55b606a992
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 0.2.3
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 352
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_0.2.3_all.deb
+Size: 67526
+MD5sum: f7144374f6ec0ae419924027ffc9df9d
+SHA1: 18f4b23a6c87a1265a2444befec6388d9e250957
+SHA256: 724c7c5373f531456f78fdf18666ac4a5f4e442d9f935cc7a52ef49f5679c6ae
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 0.2.4
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 360
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_0.2.4_all.deb
+Size: 69396
+MD5sum: 2ee3d5622d4d169069abff38f29a06a8
+SHA1: 6c91a9178b0e91b89772e675d4361ab1ea3fe202
+SHA256: b8a432efed2f1f462726e29defd7583d1018d8a035108b4839f40f95f20292bb
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 0.2.5
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 368
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_0.2.5_all.deb
+Size: 70318
+MD5sum: 5fa9cf0c03dfac01e95aa031a6351123
+SHA1: 87e1936ca9e896a4938598a8b38931ac85791369
+SHA256: d38e14090c6ff028977124568655e35ee49b4b5944608e68658891ca9a2999f0
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.0.0
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 384
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_1.0.0_all.deb
+Size: 77676
+MD5sum: be123357bdd1ca6a540c1bf05cb69540
+SHA1: 57787f646453e031c17b4d4aa1ce77ffe551879f
+SHA256: f22eecb517fa29fc6c6b4e776aa054eb412e0b037c3dc0d217cfe10f5876077e
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.1.0
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 392
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_1.1.0_all.deb
+Size: 79988
+MD5sum: a75eff481e6d7fe7cb64fcd0c7028964
+SHA1: 40cad1f2fc18f565837a5e273cd63f6b9e641b1f
+SHA256: 3487de43991469ab7a6b825a6b160006cd34c849b95adcc6cf3b8a2be4eacab4
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.3.0
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 504
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_1.3.0_all.deb
+Size: 100088
+MD5sum: 5c44557f3ac53b2f254b8c63d3d8fa87
+SHA1: 0dc67943ead97142080e4632b15991c8d084b195
+SHA256: e97c13dda16f6d315579138ebe161ce96929ab134a0274c4cd24917e2e1947d1
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.3.1
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 504
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_1.3.1_all.deb
+Size: 100258
+MD5sum: bd6069c234b49e1f9cd09fa4819c3891
+SHA1: bd5523265ad0c075058aeb000e511be356d52640
+SHA256: 2d16db64af60c35a980fddc5484a05b5127fec04bd4209844eda364717182546
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.3.2
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 508
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils
+Filename: ./clippy_1.3.2_all.deb
+Size: 100722
+MD5sum: e6f6ae759215796bcd3495779d6f6fd2
+SHA1: 8093d61f415c12b0d4f7034c82c360cc00e877b8
+SHA256: 6ca62280c5b915bd19be2a30c13c6b7058edb1374bbdf494011f4e2ec89b42a6
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.3.3
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 508
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip
+Filename: ./clippy_1.3.3_all.deb
+Size: 101142
+MD5sum: 2c19994da872f09994342fd62a00b388
+SHA1: fb0e1593e29a7e12588c1b576a19460511f2e42e
+SHA256: 9f24ab4555290d26d14c64f0750d115b372213f49e1676983ff2ac8ea5d5723a
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.3.4
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 512
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip
+Filename: ./clippy_1.3.4_all.deb
+Size: 102102
+MD5sum: 00ced4940783a7453e38e3b4451babeb
+SHA1: 08ea17329c42c7584505400d5616d509eb2856ef
+SHA256: bfe9aa50359ca889677d1dccd152e78bf8a1e549cc5e6e5b26d00bccd77b8e20
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.0
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 604
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip
+Filename: ./clippy_1.4.0_all.deb
+Size: 121984
+MD5sum: 3f54adf5eb65fa553c59d37b31e3b903
+SHA1: 99d0184cfb23f2a0d52d19019f4eff5198e550cd
+SHA256: 4f1cba2e2dcea2b5a972f14d81ce8f058b83e2a5f3c5ae093a5595cc8962b982
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.1
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 636
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip
+Filename: ./clippy_1.4.1_all.deb
+Size: 126666
+MD5sum: 076b1b88f74e0195612bcd3a2f6a3a43
+SHA1: 10933287e6715bba0d0d9ca884f63949b997a82e
+SHA256: 27f139b9436f72ccb3ff42598251a8e634fe48d0f51433cdfecd4d8d6a057181
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.2
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 648
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.2_all.deb
+Size: 131104
+MD5sum: 7d7a00358de45146b434b85caf5adc6d
+SHA1: c1b229a40ba7ae6b2d88405a9769a5de61dd5832
+SHA256: 9be55e315c547cfa63a51c53da13c9173ec64fe1a537e3e2fbad44ac33afb195
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.3
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 652
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.3_all.deb
+Size: 131724
+MD5sum: ca053f463d3264e42a20f80bf10fcf57
+SHA1: 12b9560c4529e8157f243923742f5cb8b01f760f
+SHA256: 3e3f55242011f92b1bb32c1c80d62e10efb4f956fc8751a53ed3d338a71f4306
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.4
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 656
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.4_all.deb
+Size: 132258
+MD5sum: 56251de507ef196a269ac6befc6b2d0d
+SHA1: 975ae89efd0e031f4d8e94822b391b7ee6cbcdac
+SHA256: 8362f873d09e745bd6c7575cba3128683380b2fc2ddb7c463cd84fe92284879a
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.5
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 660
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.5_all.deb
+Size: 132772
+MD5sum: 27106ce44f6e0ad4a94720ee7cece2e1
+SHA1: 8dda86093a445466b21ca1e8b9820db6ac09cde2
+SHA256: ddcc59a843e806c0e1f9f34be6628ba5f81945e518768a6e025ffa1a5c5d4bd5
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.6
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 660
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.6_all.deb
+Size: 133374
+MD5sum: ee15737777ca7e3b620be4d15d3f9bc5
+SHA1: eb9836ed0a3f5744c4a0fe823f98901e88774426
+SHA256: 507a6133269362f2ad56d97da522ec3e08971fd314d6085c1d13c6b4f6030bf2
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.7
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 664
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.7_all.deb
+Size: 134714
+MD5sum: 1b56c79a807109088e1257a231444424
+SHA1: 36d782f39b4601d6950fdff8ea16da2c13d83e7e
+SHA256: 53cef6197e25e70af217079272ea35feab38884d2c934c6bdce2c2a7b6adede6
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.8
+Architecture: all
+Maintainer: David Boulay <david.boulay@lojel.com>
+Installed-Size: 664
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.8_all.deb
+Size: 134714
+MD5sum: f372d417ac23d44b1974f02abef7a220
+SHA1: c59b139cde6233ddcbc0e5e1e6a6534e80a47802
+SHA256: d75c17b072686a02749a06b91fcce68e9d5f4d49b6d655adfe63ef667e69de27
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
+Package: clippy
+Version: 1.4.9
+Architecture: all
+Maintainer: David Boulay <89959743+davidboulay@users.noreply.github.com>
+Installed-Size: 668
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
+Filename: ./clippy_1.4.9_all.deb
+Size: 135638
+MD5sum: 620467ce60e0382ddef8df2b4727c083
+SHA1: d34048edf0fc5677563acb668a26c39e47fd92f9
+SHA256: 65788e3814b98e72e0a87ecbc715406d705a35cbc6b0a4e7befbbcbe29bfb763
+Section: utils
+Priority: optional
+Description: Clipboard history panel for Wayland (COSMIC/wlroots)
+ Clippy shows a Paste-style strip of recent clipboard items (text and images)
+ at the bottom of the screen, toggled by a global shortcut. It lives in the
+ system tray, follows the COSMIC light/dark theme, and supports pinning,
+ search, history retention, and paste-as-plain-text.
+
