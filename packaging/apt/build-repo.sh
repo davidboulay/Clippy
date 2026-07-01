@@ -52,4 +52,4 @@ sudo apt update &amp;&amp; sudo apt install clippy</pre>
 </body>
 HTML
 
-echo "built flat APT repo in $OUT:"; ls -1 "$OUT"
+echo "built flat APT repo in $OUT:"; ls -1
