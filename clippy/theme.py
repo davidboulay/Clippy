@@ -284,6 +284,12 @@ scrollbar slider:active {{ background-color: {c['accent']}; }}
 
 /* ---- settings window ---- */
 .settings-body {{ background-color: {c['bg']}; padding: 20px 22px; }}
+.settings-page {{ background-color: {c['bg']}; padding: 8px 4px; }}
+/* Notebook tabs: match the settings palette, legible in light + dark. */
+notebook, notebook header {{ background-color: {c['bg']}; }}
+notebook tab {{ color: {c['dim']}; }}
+notebook tab:hover {{ color: {c['text']}; }}
+notebook tab:checked {{ color: {c['text']}; }}
 .settings-title {{ color: {c['text']}; font-size: 18px; font-weight: bold; margin-bottom: 4px; }}
 .section-title {{ color: {c['dim']}; font-size: 11px; font-weight: bold; margin-top: 14px; margin-bottom: 4px; }}
 .settings-label {{ color: {c['text']}; font-size: 13.5px; }}
