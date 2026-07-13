@@ -62,12 +62,6 @@ class SettingsWindow:
         self._build()
 
     # -- UI helpers -------------------------------------------------------
-    def _section(self, box, text):
-        lbl = Gtk.Label(label=text.upper())
-        lbl.set_xalign(0.0)
-        lbl.get_style_context().add_class("section-title")
-        box.pack_start(lbl, False, False, 0)
-
     def _switch_row(self, box, label, desc, active, on_toggle):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
@@ -94,7 +88,6 @@ class SettingsWindow:
     # -- sync section -----------------------------------------------------
     def _build_sync_section(self, body, prefs):
         from . import sync as sync_mod
-        self._section(body, "Sync")
         self._switch_row(
             body, "Sync clipboard over LAN",
             "Encrypted sync with paired devices on your network. "
@@ -265,31 +258,44 @@ class SettingsWindow:
         except Exception:
             return 720
 
+    def _add_page(self, notebook, title):
+        """Add a notebook tab whose content scrolls only if it outgrows the
+        screen cap (the Sync tab does, once several devices are paired); short
+        tabs never scroll, which is the whole point of splitting into tabs."""
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.get_style_context().add_class("settings-page")
+        sc = Gtk.ScrolledWindow()
+        sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sc.set_propagate_natural_height(True)
+        sc.set_propagate_natural_width(True)
+        # Leave room for the title, tab strip and Close row (all outside the page).
+        sc.set_max_content_height(max(300, self._screen_cap() - 130))
+        sc.set_overlay_scrolling(False)
+        sc.add(page)
+        notebook.append_page(sc, Gtk.Label(label=title))
+        return page
+
     def _build(self):
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        body.get_style_context().add_class("settings-body")
-        # Scroll the content so the window fits short screens: it sizes to the
-        # content's natural height but is capped to the screen, after which the
-        # sections scroll (the Sync list grows per paired device).
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_propagate_natural_height(True)
-        scroller.set_propagate_natural_width(True)
-        scroller.set_max_content_height(self._screen_cap())
-        # A conventional inset scrollbar in its own gutter, not the overlay
-        # scrollbar that expands as a big translucent bar on top of the content.
-        scroller.set_overlay_scrolling(False)
-        scroller.add(body)
-        self.window.add(scroller)
+        prefs = settings.load()
+
+        # Title + tabs + a fixed Close row. Splitting the sections into tabs
+        # keeps each view short enough to fit without scrolling; the title and
+        # Close button live outside the notebook so they're always visible.
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.get_style_context().add_class("settings-body")
+        self.window.add(outer)
 
         title = Gtk.Label(label="Clippy Settings")
         title.set_xalign(0.0)
         title.get_style_context().add_class("settings-title")
-        body.pack_start(title, False, False, 0)
+        outer.pack_start(title, False, False, 0)
 
-        prefs = settings.load()
+        notebook = Gtk.Notebook()
+        notebook.set_scrollable(True)
+        outer.pack_start(notebook, True, True, 0)
 
-        self._section(body, "Appearance")
+        # ---- General --------------------------------------------------
+        gen = self._add_page(notebook, "General")
         theme_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         theme_lbl = Gtk.Label(label="Theme")
         theme_lbl.set_xalign(0.0)
@@ -301,20 +307,14 @@ class SettingsWindow:
         self._theme.set_active_id(prefs["theme_mode"])
         self._theme.connect("changed", self._on_theme_mode)
         theme_row.pack_end(self._theme, False, False, 0)
-        body.pack_start(theme_row, False, False, 0)
+        gen.pack_start(theme_row, False, False, 0)
 
-        self._section(body, "General")
         self._switch_row(
-            body, "Open at login", None, bool(prefs["open_at_login"]),
+            gen, "Open at login", None, bool(prefs["open_at_login"]),
             self._on_open_at_login,
         )
         self._switch_row(
-            body, "Check for updates automatically",
-            "Periodically check GitHub for a newer version.",
-            bool(prefs["auto_check_updates"]), self._on_auto_updates,
-        )
-        self._switch_row(
-            body, "Sound on copy", "Play a short sound whenever you copy.",
+            gen, "Sound on copy", "Play a short sound whenever you copy.",
             bool(prefs["sound_on_copy"]), self._on_sound,
         )
 
@@ -341,41 +341,14 @@ class SettingsWindow:
         )
         sound_row.pack_end(preview, False, False, 0)
         sound_row.pack_end(self._sound_choice, False, False, 0)
-        body.pack_start(sound_row, False, False, 0)
+        gen.pack_start(sound_row, False, False, 0)
 
         self._switch_row(
-            body, "Always paste as plain text",
+            gen, "Always paste as plain text",
             "When off, copied formatting is preserved on paste.",
             bool(prefs["always_plain_text"]), self._on_plain,
         )
 
-        self._section(body, "History")
-        ret_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        ret_lbl = Gtk.Label(label="Keep history for")
-        ret_lbl.set_xalign(0.0)
-        ret_lbl.get_style_context().add_class("settings-label")
-        ret_row.pack_start(ret_lbl, True, True, 0)
-        self._retention = Gtk.ComboBoxText()
-        for key, label, _secs in config.RETENTION_OPTIONS:
-            self._retention.append(key, label)
-        self._retention.set_active_id(prefs["retention"])
-        self._retention.connect("changed", self._on_retention)
-        ret_row.pack_end(self._retention, False, False, 0)
-        body.pack_start(ret_row, False, False, 0)
-
-        clear_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        clear_lbl = Gtk.Label(label="Clear all history now")
-        clear_lbl.set_xalign(0.0)
-        clear_lbl.get_style_context().add_class("settings-label")
-        clear_row.pack_start(clear_lbl, True, True, 0)
-        clear_btn = Gtk.Button(label="Clear history")
-        clear_btn.get_style_context().add_class("normal-btn")
-        clear_btn.get_style_context().add_class("danger")
-        clear_btn.connect("clicked", self._on_clear)
-        clear_row.pack_end(clear_btn, False, False, 0)
-        body.pack_start(clear_row, False, False, 0)
-
-        self._section(body, "Shortcut")
         sc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         sc_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         sc_lbl = Gtk.Label(label="Open Clippy")
@@ -388,16 +361,50 @@ class SettingsWindow:
         self._sc_desc.get_style_context().add_class("settings-desc")
         sc_text.pack_start(self._sc_desc, False, False, 0)
         sc_row.pack_start(sc_text, True, True, 0)
-
         self._sc_btn = Gtk.Button(label=self._current_combo_text())
         self._sc_btn.get_style_context().add_class("shortcut-btn")
         self._sc_btn.connect("clicked", self._on_capture_start)
         sc_row.pack_end(self._sc_btn, False, False, 0)
-        body.pack_start(sc_row, False, False, 0)
+        gen.pack_start(sc_row, False, False, 0)
 
-        self._build_sync_section(body, prefs)
+        # ---- History --------------------------------------------------
+        hist = self._add_page(notebook, "History")
+        ret_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        ret_lbl = Gtk.Label(label="Keep history for")
+        ret_lbl.set_xalign(0.0)
+        ret_lbl.get_style_context().add_class("settings-label")
+        ret_row.pack_start(ret_lbl, True, True, 0)
+        self._retention = Gtk.ComboBoxText()
+        for key, label, _secs in config.RETENTION_OPTIONS:
+            self._retention.append(key, label)
+        self._retention.set_active_id(prefs["retention"])
+        self._retention.connect("changed", self._on_retention)
+        ret_row.pack_end(self._retention, False, False, 0)
+        hist.pack_start(ret_row, False, False, 0)
 
-        self._section(body, "About")
+        clear_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        clear_lbl = Gtk.Label(label="Clear all history now")
+        clear_lbl.set_xalign(0.0)
+        clear_lbl.get_style_context().add_class("settings-label")
+        clear_row.pack_start(clear_lbl, True, True, 0)
+        clear_btn = Gtk.Button(label="Clear history")
+        clear_btn.get_style_context().add_class("normal-btn")
+        clear_btn.get_style_context().add_class("danger")
+        clear_btn.connect("clicked", self._on_clear)
+        clear_row.pack_end(clear_btn, False, False, 0)
+        hist.pack_start(clear_row, False, False, 0)
+
+        # ---- Sync -----------------------------------------------------
+        syncp = self._add_page(notebook, "Sync")
+        self._build_sync_section(syncp, prefs)
+
+        # ---- About ----------------------------------------------------
+        about = self._add_page(notebook, "About")
+        self._switch_row(
+            about, "Check for updates automatically",
+            "Periodically check GitHub for a newer version.",
+            bool(prefs["auto_check_updates"]), self._on_auto_updates,
+        )
         about_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         about_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         ver_lbl = Gtk.Label(label=f"Clippy {updates.current_version()}")
@@ -415,7 +422,7 @@ class SettingsWindow:
         self._check_btn.get_style_context().add_class("normal-btn")
         self._check_btn.connect("clicked", self._on_check_updates)
         about_row.pack_end(self._check_btn, False, False, 0)
-        body.pack_start(about_row, False, False, 0)
+        about.pack_start(about_row, False, False, 0)
 
         # Action row shown only when an update is available.
         self._update_url = updates.RELEASES_PAGE
@@ -435,14 +442,15 @@ class SettingsWindow:
         self._download_btn.get_style_context().add_class("normal-btn")
         self._download_btn.connect("clicked", self._on_open_download)
         actions.pack_start(self._download_btn, False, False, 0)
-        body.pack_start(actions, False, False, 0)
+        about.pack_start(actions, False, False, 0)
 
+        # ---- Close (always visible, outside the tabs) -----------------
         close_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         close_btn = Gtk.Button(label="Close")
         close_btn.get_style_context().add_class("normal-btn")
         close_btn.connect("clicked", lambda _b: self.hide())
         close_row.pack_end(close_btn, False, False, 0)
-        body.pack_start(close_row, False, False, 12)
+        outer.pack_start(close_row, False, False, 12)
 
     # -- current shortcut -------------------------------------------------
     def _current_combo(self):
