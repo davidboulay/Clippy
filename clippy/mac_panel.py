@@ -1698,6 +1698,16 @@ class PanelController(NSObject):
                 storage.touch(entry_id)        # recovered clip jumps to the front
             except Exception:
                 pass
+            # Mirror that reordering to paired devices. Our own pasteboard write
+            # above won't trip the (self-write-suppressed) capture→broadcast path,
+            # so broadcast explicitly — matching Linux, where the clipboard
+            # watcher does it for free.
+            cb = getattr(self, "_broadcast_recovered", None)
+            if cb is not None:
+                try:
+                    cb(entry_id)
+                except Exception:
+                    pass
         self.hide()
 
     def openSettings_(self, _sender):

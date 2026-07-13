@@ -150,6 +150,14 @@ def run() -> int:
                         self._settings = SettingsController.alloc().initWithEngine_(engine)
                     self._settings.show()
                 self._panel_ctrl._open_settings = _open_settings   # cog button → Settings
+
+                # Recover-to-front must reach paired devices. On macOS the
+                # changeCount watcher suppresses our own pasteboard writes (see
+                # _on_received above), so recovering a clip never re-enters the
+                # capture→broadcast path the way Linux's clipboard watcher does.
+                # Push the touched entry explicitly. (_broadcast_entry keeps its
+                # own echo-guard, so this can't loop.)
+                self._panel_ctrl._broadcast_recovered = engine.broadcast_id
                 # Mac-specific key (the shared "shortcut" is a Linux dict and
                 # Super+V maps to ⌘V, which collides with paste). Default ⌘⇧V.
                 keycode, mods = parse_shortcut(settings.get("mac_shortcut"))
