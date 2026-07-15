@@ -315,28 +315,56 @@ class SyncEngine:
         return None, None, None
 
     # -- lifecycle -------------------------------------------------------
+    def _bind_listener(self) -> socket.socket:
+        """Bind + listen on the sync port, retrying briefly.
+
+        On an in-app update the outgoing daemon relaunches the new one while it
+        may still hold this port: its IPC socket closes first (so the
+        single-instance check passes) but the listening socket lingers until the
+        slow zeroconf teardown finishes. A plain SO_REUSEADDR bind then throws
+        EADDRINUSE, _make_engine swallows it, and sync comes up dead with the
+        pairing UI hidden. Retry across that hand-off, and set SO_REUSEPORT so
+        future restarts (both sides having it) can overlap without a gap."""
+        last = None
+        for attempt in range(16):   # ~5s: covers the outgoing daemon's teardown
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass  # not on this platform/kernel — SO_REUSEADDR + retry still work
+            try:
+                s.bind(("0.0.0.0", self.port))
+                s.listen(16)
+                return s
+            except OSError as exc:
+                s.close()
+                last = exc
+                if attempt < 15:
+                    time.sleep(0.3)
+        raise last
+
     def start(self) -> None:
         if not sync_available() or self._priv is None:
             return
         self._running = True
-        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server.bind(("0.0.0.0", self.port))
-        self._server.listen(16)
+        self._server = self._bind_listener()
         threading.Thread(target=self._serve, daemon=True).start()
         self._advertise()
 
     def stop(self) -> None:
         self._running = False
-        if self._zc is not None:
-            try:
-                self._zc.close()
-            except Exception:
-                pass
+        # Release the listening port *before* the (slow) zeroconf teardown so a
+        # relaunching daemon can bind it promptly.
         if self._server is not None:
             try:
                 self._server.close()
             except OSError:
+                pass
+        if self._zc is not None:
+            try:
+                self._zc.close()
+            except Exception:
                 pass
 
     def restart_network(self) -> None:
@@ -358,10 +386,7 @@ class SyncEngine:
         self._peers_online.clear()
         try:
             self._running = True
-            self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._server.bind(("0.0.0.0", self.port))
-            self._server.listen(16)
+            self._server = self._bind_listener()
             threading.Thread(target=self._serve, daemon=True).start()
             self._advertise()
             print("[clippy-sync] network restarted (wake/resume)", file=sys.stderr)
