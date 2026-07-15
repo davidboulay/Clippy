@@ -14,7 +14,7 @@ import sys
 import threading
 from typing import Optional
 
-from . import clipboard, config, ipc, settings, setup, sound, theme
+from . import clipboard, config, ipc, settings, setup, sound, theme, x11clip
 from .capture import capture_current
 
 _RETENTION_INTERVAL_SECONDS = 1800  # re-check every 30 min
@@ -279,6 +279,12 @@ def run_daemon() -> int:
 
     watcher = _start_watcher()
 
+    # Persistent X11 (XWayland) clipboard owner: serves recovered clips to X11
+    # apps (Claude Desktop, etc.) directly and keeps Xwayland from cycling. Start
+    # it now and re-check on a slow tick so it's respawned if it ever dies.
+    x11clip.start()
+    GLib.timeout_add_seconds(30, lambda: (x11clip.start(), True)[1])
+
     # Capture whatever is already on the clipboard, then enforce retention.
     def _startup_work():
         capture_current()
@@ -304,6 +310,7 @@ def run_daemon() -> int:
         pass
     finally:
         server.stop()
+        x11clip.stop()
         if engine is not None:
             engine.stop()
         if watcher is not None:
