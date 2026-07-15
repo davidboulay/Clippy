@@ -163,6 +163,7 @@ def main(argv=None) -> int:
     sub.add_parser("quit", help="stop the running daemon")
     sub.add_parser("status", help="report daemon and history status")
     sub.add_parser("_store")  # internal: wl-paste --watch hook
+    sub.add_parser("_x11clip")  # internal: persistent X11 (XWayland) clipboard owner
     sub.add_parser("setup-shortcut", help="how to bind a global shortcut")
     sub.add_parser("install-autostart", help="autostart the daemon on login")
     sub.add_parser("install-icons", help="install the tray/app icon into the theme")
@@ -187,6 +188,9 @@ def main(argv=None) -> int:
         return _cmd_send(args.command)
     if args.command == "_store":
         return _cmd_store()
+    if args.command == "_x11clip":
+        from .x11clip import run
+        return run()
     if args.command == "status":
         return _cmd_status()
     if args.command == "pair":

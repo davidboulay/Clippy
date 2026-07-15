@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from typing import Callable, List, Optional
 
-from .. import config
+from .. import config, x11clip
 from .base import ClipboardError
 
 
@@ -94,14 +94,14 @@ class WaylandBackend:
         subprocess.run(["wl-copy"], input=data, timeout=10)
         # wl-copy only sets the wlr-data-control selection. cosmic-comp bridges
         # the *regular* wl_data_device selection into data-control (so wl-paste
-        # sees app copies) but NOT the other way — a data-control selection is
-        # invisible to the GUI apps that read the regular selection (Chromium/
-        # Brave, GTK, and every XWayland app). So a clip recovered from history
-        # would sit unpasteable there. Mirror it to X11 with a default target;
-        # Xwayland re-publishes that into the regular selection, reaching both
-        # native-Wayland and XWayland apps. (Same gap copy_image/copy_file
-        # cross — the old "compositor bridges text both ways" note was wrong.)
-        self.mirror_to_x11(None, data)
+        # sees app copies) but NOT reliably the other way — a data-control
+        # selection is invisible to GUI apps that read the regular selection
+        # (Chromium/Brave, GTK, every XWayland app), so a recovered clip would
+        # sit unpasteable there. Hand it to the persistent X11 owner, which
+        # serves XWayland apps directly and keeps Xwayland alive; fall back to a
+        # one-shot xclip mirror when that owner isn't available.
+        if not x11clip.publish(data):
+            self.mirror_to_x11(None, data)
 
     def copy_html(self, html: str) -> None:
         data = html.encode("utf-8")
@@ -207,8 +207,9 @@ class WaylandBackend:
         payload = f"copy\nfile://{uri}".encode("utf-8")
         subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
                        input=payload, timeout=15)
-        # Mirror a uri-list to X11 so XWayland apps that accept a dropped/pasted
-        # file (editors, some chat apps) see it too.
+        # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
+        # (editors, some chat apps) see it too. (Files stay on the xclip mirror
+        # rather than the text-only persistent owner.)
         self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
 
     def start_watch(self, on_change: Callable[[], None]) -> None:
