@@ -134,7 +134,37 @@ def run() -> int:
             rumps.Timer(self._tick_status, 5).start()
             rumps.Timer(self._fix_retina_icon, 1).start()  # one-shot (stops itself)
             rumps.Timer(self._setup_panel, 0.3).start()    # one-shot (stops itself)
+            # Auto-update check: once ~30s after launch, then every 6h. Each run
+            # is gated (enabled + >24h since last) inside updates.auto_check.
+            rumps.Timer(self._first_update_check, 30).start()  # one-shot
+            rumps.Timer(self._auto_update_tick, 6 * 3600).start()
             self._tick_status(None)
+
+        def _first_update_check(self, timer):
+            timer.stop()
+            self._auto_update_tick(None)
+
+        def _auto_update_tick(self, _timer):
+            import threading
+
+            def worker():
+                from . import APP_NAME, updates
+                result = updates.auto_check()
+                if not (result and result.update_available and result.latest):
+                    return
+                # NSUserNotificationCenter must be touched on the main thread.
+                try:
+                    from PyObjCTools import AppHelper
+                    AppHelper.callAfter(
+                        rumps.notification,
+                        f"{APP_NAME} {result.latest} is available", "",
+                        f"You have {updates.current_version()}. "
+                        "Open Clippy → Settings → Check for updates.",
+                    )
+                except Exception:
+                    pass
+
+            threading.Thread(target=worker, daemon=True).start()
 
         def _setup_panel(self, timer):
             # Build the history panel + register the global hotkey from inside the
