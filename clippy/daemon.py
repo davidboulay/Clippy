@@ -292,9 +292,9 @@ def run_daemon() -> int:
 
     # Automatic update check: once shortly after startup, then on a slow tick.
     # Each tick only hits the network if enabled and >24h since the last check.
-    GLib.timeout_add_seconds(45, lambda: (auto_update_check(), False)[1])
+    GLib.timeout_add_seconds(45, lambda: (auto_update_check(controller), False)[1])
     GLib.timeout_add_seconds(
-        _UPDATE_TICK_SECONDS, lambda: (auto_update_check(), True)[1]
+        _UPDATE_TICK_SECONDS, lambda: (auto_update_check(controller), True)[1]
     )
 
     print("clippy: daemon started.")
@@ -323,27 +323,64 @@ def storage_apply_retention_safe() -> None:
         pass
 
 
-def auto_update_check() -> None:
+def _simple_note(body: str) -> None:
+    """Fire-and-forget desktop note for update progress (best-effort)."""
+    if shutil.which("notify-send") is None:
+        return
+    try:
+        subprocess.Popen(
+            ["notify-send", "--app-name", "Clippy", body],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
+
+
+def _do_update(controller, result) -> None:
+    """Handle the notification's 'Update now': download the .deb, install it via
+    pkexec (which shows its own password dialog), then relaunch. Runs on the
+    notification worker thread; progress is reported with follow-up notes."""
+    import os
+
+    from . import updates
+    deb_url = getattr(result, "deb_url", None)
+    if not deb_url:
+        return
+    _simple_note(f"Downloading Clippy {result.latest}…")
+    try:
+        path = updates.download_deb(deb_url)
+    except Exception:
+        _simple_note("Update download failed. Try Settings → Check for updates.")
+        return
+    _simple_note("Installing update — enter your password if prompted.")
+    ok, msg = updates.install_deb(path)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    if ok:
+        _simple_note("Clippy updated — restarting.")
+        if controller is not None:
+            from gi.repository import GLib
+            GLib.idle_add(controller.restart_for_update)
+    else:
+        _simple_note(f"Update failed: {msg}")
+
+
+def auto_update_check(controller=None) -> None:
     """If enabled and >24h since the last check, query GitHub on a background
-    thread and notify if a newer release exists. Never blocks the main loop."""
-    import time
-
-    from . import settings
-
-    if not settings.get("auto_check_updates"):
-        return
-    last = settings.get("last_update_check") or 0
-    if time.time() - last < _UPDATE_MIN_INTERVAL:
-        return
-
+    thread and notify if a newer release exists. Never blocks the main loop.
+    The notification offers a one-click 'Update now' when a controller is
+    available (so it can relaunch after installing)."""
     def worker():
         from . import updates
-        try:
-            result = updates.check()
-        except Exception:
-            return
-        settings.set_value("last_update_check", time.time())
-        if result.update_available and result.latest:
-            updates.notify(result.latest, result.url)
+        result = updates.auto_check()
+        if result and result.update_available and result.latest:
+            on_update = (
+                (lambda r: _do_update(controller, r))
+                if controller is not None else None
+            )
+            updates.notify(result, on_update=on_update)
 
     threading.Thread(target=worker, daemon=True).start()
