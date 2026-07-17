@@ -45,8 +45,8 @@ def copy_text(text: str) -> None:
     get_backend().copy_text(text)
 
 
-def copy_html(html: str) -> None:
-    get_backend().copy_html(html)
+def copy_html(html: str, text: Optional[str] = None) -> None:
+    get_backend().copy_html(html, text)
 
 
 def copy_image(data: bytes, mime: str) -> None:

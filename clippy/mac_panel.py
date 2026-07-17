@@ -333,7 +333,7 @@ def _load_entry(entry, mode="auto"):
             use_rich = (entry.html and mode != "plain"
                         and (mode == "rich" or not always_plain))
             if use_rich:
-                clipboard.copy_html(entry.html)
+                clipboard.copy_html(entry.html, entry.text)
             else:
                 clipboard.copy_text(entry.text or "")
         # Recovering a clip is a copy action — play the copy sound if enabled

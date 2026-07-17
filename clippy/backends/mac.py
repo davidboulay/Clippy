@@ -91,9 +91,14 @@ class MacBackend:
         self._pb.setString_forType_(text, _TEXT)
         self._last_change = self._pb.changeCount()
 
-    def copy_html(self, html: str) -> None:
+    def copy_html(self, html: str, text: Optional[str] = None) -> None:
+        # Offer BOTH flavors, like a native browser copy: apps that paste
+        # plain text (VS Code, Slack — Electron reads public.utf8-plain-text)
+        # get nothing from an html-only pasteboard.
         self._pb.clearContents()
         self._pb.setString_forType_(html, _HTML)
+        if text:
+            self._pb.setString_forType_(text, _TEXT)
         self._last_change = self._pb.changeCount()
 
     def copy_image(self, data: bytes, mime: str) -> None:
