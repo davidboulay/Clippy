@@ -19,6 +19,28 @@ from .capture import capture_current
 _LOGIN_LABEL = "io.github.davidboulay.Clippy"
 _LOGIN_PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{_LOGIN_LABEL}.plist")
 
+# The running ClippyApp, so the module-level notification-click handler (which
+# rumps calls with just the notification) can reach it. Set in run().
+_APP = None
+
+
+def _handle_notification_click(notification):
+    """Called by rumps when the user clicks a posted notification. For the
+    'update available' prompt (data={'action': 'update'}) this opens Settings
+    and starts an update check. Any other/missing data is ignored."""
+    app = _APP
+    if app is None:
+        return
+    try:
+        data = getattr(notification, "data", None)
+    except Exception:
+        data = None
+    if isinstance(data, dict) and data.get("action") == "update":
+        try:
+            app._open_settings_and_check()
+        except Exception:
+            pass
+
 
 # -- Start at login (LaunchAgent) ---------------------------------------
 def login_installed() -> bool:
@@ -148,23 +170,47 @@ def run() -> int:
             import threading
 
             def worker():
-                from . import APP_NAME, updates
+                from . import updates
                 result = updates.auto_check()
                 if not (result and result.update_available and result.latest):
                     return
                 # NSUserNotificationCenter must be touched on the main thread.
                 try:
                     from PyObjCTools import AppHelper
-                    AppHelper.callAfter(
-                        rumps.notification,
-                        f"{APP_NAME} {result.latest} is available", "",
-                        f"You have {updates.current_version()}. "
-                        "Open Clippy → Settings → Check for updates.",
-                    )
+                    AppHelper.callAfter(self._post_update_notification, result.latest)
                 except Exception:
                     pass
 
             threading.Thread(target=worker, daemon=True).start()
+
+        def _post_update_notification(self, latest):
+            """Actionable 'update available' prompt. Clicking it opens Settings
+            and runs the check so the user can install with one more click (see
+            _handle_notification_click). The body still spells out the manual
+            path, so the prompt is useful even if the click isn't delivered."""
+            from . import APP_NAME, updates
+            try:
+                rumps.notification(
+                    f"{APP_NAME} {latest} is available",
+                    "Click to update",
+                    f"You have {updates.current_version()}. "
+                    "Or open Clippy → Settings → Check for updates.",
+                    data={"action": "update"},
+                )
+            except Exception:
+                pass
+
+        def _open_settings_and_check(self):
+            """Open the Settings window and kick off an update check — the
+            landing point for a clicked update notification."""
+            try:
+                from .mac_settings import SettingsController
+                if self._settings is None:
+                    self._settings = SettingsController.alloc().initWithEngine_(engine)
+                self._settings.show()
+                self._settings.checkUpdates_(None)
+            except Exception:
+                pass
 
         def _setup_panel(self, timer):
             # Build the history panel + register the global hotkey from inside the
@@ -308,6 +354,15 @@ def run() -> int:
 
     app = ClippyApp()
     engine._on_progress = app.on_progress
+    # Register the notification-click handler so the "update available" prompt
+    # is actionable (opens Settings + checks). Best-effort: if rumps' API
+    # differs, the notification still carries the manual instructions.
+    global _APP
+    _APP = app
+    try:
+        rumps.notifications(_handle_notification_click)
+    except Exception:
+        pass
     engine.start()
 
     # First run: honor Start-at-login (default on).

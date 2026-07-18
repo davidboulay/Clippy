@@ -427,10 +427,43 @@ class SettingsController(NSObject):
     def installUpdate_(self, sender):
         res = self._update_res
         if res is None:
+            self.checkUpdates_(sender)
             return
         if not getattr(res, "dmg_url", None):
-            self._open_url(res.url)        # no .dmg asset — open the release page
+            # The release is published but its .dmg asset isn't up yet — the
+            # build workflow may still be running. Re-query GitHub on every
+            # click instead of bouncing the user to a browser (which used to
+            # stick: once we'd opened the page, the cached result kept opening
+            # it on every subsequent click until relaunch). The .dmg usually
+            # appears a minute or two after the release is tagged.
+            self.update_status.setStringValue_("Installer not ready yet — checking again…")
+            self.update_btn.setEnabled_(False)
+
+            def recheck():
+                try:
+                    self._update_res = updates.check()
+                except Exception:
+                    self._update_res = None
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    b"dmgRecheck", None, False)
+
+            threading.Thread(target=recheck, daemon=True).start()
             return
+        self._beginDmgDownload(res)
+
+    def dmgRecheck(self):
+        """Result of the retry triggered when the .dmg wasn't published yet."""
+        self.update_btn.setEnabled_(True)
+        res = self._update_res
+        if res is not None and res.update_available and getattr(res, "dmg_url", None):
+            self._beginDmgDownload(res)            # asset landed — proceed
+        elif res is not None and res.update_available:
+            self.update_status.setStringValue_(
+                "Installer isn't published yet — click Download to retry")
+        else:
+            self.applyUpdate()                     # offline / no longer applicable
+
+    def _beginDmgDownload(self, res):
         self.update_status.setStringValue_("Downloading update…")
         self.update_btn.setEnabled_(False)
 
@@ -447,9 +480,11 @@ class SettingsController(NSObject):
     def dmgReady(self):
         path = getattr(self, "_dmg_path", None)
         if not path:
+            # A genuine download failure (network/disk). Don't bounce to a
+            # browser — leave the button as a retry so a second click tries
+            # the download again.
             self.update_btn.setEnabled_(True)
-            self.update_status.setStringValue_("Download failed — opening release page")
-            self._open_url(self._update_res.url)
+            self.update_status.setStringValue_("Download failed — click Download to retry")
             return
         # Stage + spawn the swap/relaunch helper on a thread (hdiutil/ditto are
         # slow); then quit so the helper can replace the running bundle.
