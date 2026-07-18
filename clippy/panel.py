@@ -762,16 +762,34 @@ class Panel:
         GtkLayerShell.set_exclusive_zone(win, -1)
 
     def _set_active_monitor(self) -> None:
-        """Show the strip on the monitor under the pointer (best effort)."""
+        """Place the strip on the monitor the user is actually working on.
+
+        On Wayland a client can't read the global pointer position — GDK reports
+        (0, 0) for the core pointer — so get_monitor_at_point() always resolves
+        to whichever monitor contains the origin, and pinning the layer surface
+        there landed the panel on that one monitor every single time regardless
+        of where the cursor was (issue #49). The fix is to *not* pin an output
+        on Wayland: with the output left unset the compositor maps the layer
+        surface onto the active output (the one with focus / the pointer), which
+        is exactly what we want. We only pin explicitly when the pointer
+        position is trustworthy (X11), where get_monitor_at_point works.
+        """
         try:
             display = Gdk.Display.get_default()
+            if display is None:
+                return
+            # Wayland: leave the output unset so the compositor picks the active
+            # one. Querying the pointer here would always yield the origin
+            # monitor and defeat the purpose.
+            if "wayland" in type(display).__name__.lower():
+                return
             monitor = None
-            seat = display.get_default_seat() if display else None
+            seat = display.get_default_seat()
             pointer = seat.get_pointer() if seat else None
             if pointer is not None:
                 _screen, x, y = pointer.get_position()
                 monitor = display.get_monitor_at_point(x, y)
-            if monitor is None and display is not None:
+            if monitor is None:
                 monitor = display.get_primary_monitor() or (
                     display.get_monitor(0) if display.get_n_monitors() else None
                 )
