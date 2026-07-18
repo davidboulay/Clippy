@@ -103,7 +103,10 @@ class WaylandBackend:
         if not x11clip.publish(data):
             self.mirror_to_x11(None, data)
 
-    def copy_html(self, html: str) -> None:
+    def copy_html(self, html: str, text: Optional[str] = None) -> None:
+        # ``text`` (the plain flavor) can't be offered alongside html here:
+        # wl-copy serves a single MIME type per invocation, and a second
+        # wl-copy would steal the selection and drop the html.
         data = html.encode("utf-8")
         subprocess.run(["wl-copy", "--type", "text/html"], input=data, timeout=10)
         # Mirror to X11 as well (see copy_text): a data-control text/html

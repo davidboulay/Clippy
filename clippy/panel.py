@@ -1020,7 +1020,7 @@ class Panel:
                     and (mode == "rich" or not always_plain)
                 )
                 if use_rich:
-                    clipboard.copy_html(entry.html)
+                    clipboard.copy_html(entry.html, entry.text)
                 else:
                     clipboard.copy_text(entry.text or "")
         except OSError:
