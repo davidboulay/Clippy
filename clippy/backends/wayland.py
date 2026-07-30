@@ -116,12 +116,59 @@ class WaylandBackend:
         self.mirror_to_x11("text/html", data)
 
     def copy_image(self, data: bytes, mime: str) -> None:
-        # Offer the raw image bytes so chat/editor apps (Slack, WhatsApp, VS Code,
-        # browsers) accept a direct paste — not just file managers. wl-copy serves
-        # native-Wayland apps; the X11 mirror covers XWayland apps, which the
-        # compositor does not reliably hand a data-control image selection.
+        # An image has to be offered two ways *at the same time*: raw bytes, so
+        # chat/editor apps (Slack, WhatsApp, browsers, a VS Code editor pane)
+        # accept a direct paste, and a file reference, because file-drop targets
+        # — the VS Code Explorer, Nautilus — can do nothing with bytes and would
+        # otherwise paste an empty file. Only the persistent owner can offer
+        # both at once; wl-copy and xclip serve one type per invocation.
+        parts = [(mime, data)]
+        staged = self._stage_image(data, mime)
+        if staged:
+            parts += self._file_parts(staged)
+        if x11clip.publish_parts(parts):
+            # The owner holds the X11 selection and Xwayland re-exposes it as the
+            # regular Wayland selection, so native-Wayland *and* XWayland apps
+            # both see it. Adding a wl-copy here would be worse than useless: it
+            # only sets data-control, and loses the selection (and exits) within
+            # seconds once the owner's X11 grab bounces back through cosmic-comp.
+            return
+        # No persistent owner (no X display, or GTK 4 unavailable): fall back to
+        # one flavor per channel — bytes only, so file-drop targets stay broken.
         subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
         self._x11_mirror(mime, data)
+
+    @staticmethod
+    def _stage_image(data: bytes, mime: str) -> Optional[str]:
+        """Write the image somewhere it can be referenced as a *file*, under a
+        human-friendly name — a file-drop paste is named after the URI, and the
+        content-addressed blob is named after its sha256. Rewritten per recover;
+        returns None if it can't be staged (callers then offer bytes only)."""
+        import os
+        ext = {"image/jpeg": "jpg", "image/jpg": "jpg", "image/bmp": "bmp",
+               "image/tiff": "tiff"}.get(mime.lower(), "png")
+        try:
+            stage = config.DATA_DIR / "paste"
+            stage.mkdir(parents=True, exist_ok=True)
+            dest = stage / f"image.{ext}"
+            tmp = stage / f".image.{ext}.tmp"
+            # Write-then-rename: a consumer that resolves the URI while we're
+            # still writing would otherwise read a truncated file.
+            tmp.write_bytes(data)
+            os.replace(tmp, dest)
+            return str(dest)
+        except OSError:
+            return None
+
+    @staticmethod
+    def _file_parts(path: str) -> List[tuple]:
+        """The two flavors a file-drop target understands, for one path."""
+        import urllib.request
+        uri = "file://" + urllib.request.pathname2url(path)
+        return [
+            ("text/uri-list", (uri + "\r\n").encode("utf-8")),
+            ("x-special/gnome-copied-files", ("copy\n" + uri).encode("utf-8")),
+        ]
 
     def mirror_to_x11(self, mime: Optional[str], data: bytes) -> None:
         """Publish `data` to the X11 clipboard so XWayland apps — and, via the
@@ -205,14 +252,17 @@ class WaylandBackend:
     def copy_file(self, path: str) -> None:
         # Offer the file the way file managers expect: a gnome-copied-files list
         # plus a uri-list, so pasting in Files/Nautilus drops the actual file.
+        # The persistent owner carries both at once and keeps serving them; the
+        # fallback below can only put one on each channel.
+        if x11clip.publish_parts(self._file_parts(path)):
+            return
         import urllib.request
         uri = urllib.request.pathname2url(path)
         payload = f"copy\nfile://{uri}".encode("utf-8")
         subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
                        input=payload, timeout=15)
         # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
-        # (editors, some chat apps) see it too. (Files stay on the xclip mirror
-        # rather than the text-only persistent owner.)
+        # (editors, some chat apps) see it too.
         self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
 
     def start_watch(self, on_change: Callable[[], None]) -> None:
