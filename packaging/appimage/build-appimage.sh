@@ -38,7 +38,13 @@ PYSITE="$APPDIR/usr/lib/python${PYVER}/site-packages"
 mkdir -p "$PYSITE"
 cp -r /usr/lib/python3/dist-packages/gi "$PYSITE/" 2>/dev/null \
    || cp -r /usr/lib/python3/dist-packages/gi "$PYSITE/"
-for tl in Gtk-3.0 Gdk-3.0 GdkPixbuf-2.0 Gio-2.0 GLib-2.0 GObject-2.0 \
+# Gtk/Gdk 4.0 (+ Graphene, which GTK 4 needs) are for the persistent X11
+# clipboard owner in x11clip.py: it runs as a separate GTK 4 process because only
+# GTK 4's Gdk.ContentProvider can offer several MIME flavors on one selection.
+# Without these typelibs that helper can't start and image clips lose their file
+# flavor, so file-drop pastes break.
+for tl in Gtk-3.0 Gdk-3.0 Gtk-4.0 Gdk-4.0 Graphene-1.0 \
+          GdkPixbuf-2.0 Gio-2.0 GLib-2.0 GObject-2.0 \
           Pango-1.0 cairo-1.0 GtkLayerShell-0.1 AyatanaAppIndicator3-0.1 \
           Atk-1.0 HarfBuzz-0.0 freetype2-2.0 GModule-2.0; do
     [ -f "$GIR_DIR/$tl.typelib" ] && cp "$GIR_DIR/$tl.typelib" \
