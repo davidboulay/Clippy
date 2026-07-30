@@ -196,6 +196,36 @@ def _mirror_allowed() -> bool:
     return True
 
 
+_RESTORE_MAX_AGE = 120   # seconds; only re-place a clip we plausibly just destroyed
+
+
+def _restore_lost_clip() -> None:
+    """Put the last clip back when we find the clipboard empty at startup.
+
+    Mirroring makes us the selection owner, which means *we* are what the clipboard
+    depends on: quitting takes the helper with it and the clip disappears — nothing
+    else was serving it. The in-app updater restarts the daemon, so an update would
+    silently empty your clipboard.
+
+    Only for a clip recent enough that we plausibly destroyed it ourselves. A clip
+    from hours ago means the session started empty for ordinary reasons, and
+    resurrecting it would be us inventing a clipboard the user never set."""
+    import time
+
+    from . import storage
+    try:
+        # list_entries orders pinned-first, so pick the genuinely newest by time.
+        entries = storage.list_entries(limit=25)
+    except OSError:
+        return
+    if not entries:
+        return
+    entry = max(entries, key=lambda e: e.created_at or 0)
+    if time.time() - (entry.created_at or 0) > _RESTORE_MAX_AGE:
+        return
+    _current_clipboard(str(entry.id))
+
+
 def _current_clipboard(entry_id: str) -> None:
     """Keep the X11 selection in step with the clip that is current right now.
 
@@ -221,9 +251,24 @@ def _current_clipboard(entry_id: str) -> None:
         pass
     digest = entry.hash if entry is not None else None
 
+    # MIRRORING ON CAPTURE IS DISABLED — it destroys the clipboard on this
+    # compositor. Taking the X11 selection gets bounced back: cosmic-comp copies
+    # our X11 offer into the Wayland selection, then Xwayland re-takes the X11
+    # selection ~35s later to proxy that Wayland offer — and Xwayland cannot serve
+    # image data, so both channels end up advertising an offer nothing backs. The
+    # clipboard dies everywhere, not just in XWayland apps, which is strictly
+    # worse than the gap it was meant to close. Measured: our helper holds it with
+    # is_local=True for ~35s, then is_local=False and every flavor reads 0 bytes
+    # on both X11 *and* the regular Wayland selection.
+    #
+    # The real bug is Xwayland failing to relay image data from the Wayland
+    # selection; a mirror can only race it. Left here, disabled, so the next
+    # attempt starts from what was measured rather than from scratch.
+    _MIRROR_ON_CAPTURE = False
+
     if entry is not None and digest == x11clip.published_digest():
         return                      # already the live X11 selection — our own echo
-    if entry is not None and _mirror_allowed():
+    if _MIRROR_ON_CAPTURE and entry is not None and _mirror_allowed():
         try:
             if entry.is_image and entry.image_path:
                 # copy_image publishes X11-only when the owner accepts, so this
@@ -367,7 +412,17 @@ def run_daemon() -> int:
 
     # Capture whatever is already on the clipboard, then enforce retention.
     def _startup_work():
-        capture_current()
+        eid = capture_current()
+        # Mirror it too, don't just record it. A restart leaves the X11 selection
+        # with no owner (the previous helper died with the old process), and
+        # `wl-paste --watch` only reports *changes* — so without this the clip
+        # already on the clipboard would stay unpasteable in XWayland apps until
+        # something else was copied. The in-app updater restarts the daemon, so
+        # every update opened exactly that window.
+        if eid:
+            _current_clipboard(str(eid))
+        else:
+            _restore_lost_clip()
         storage_apply_retention_safe()
     threading.Thread(target=_startup_work, daemon=True).start()
 
