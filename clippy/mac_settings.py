@@ -449,21 +449,24 @@ class SettingsController(NSObject):
 
             threading.Thread(target=recheck, daemon=True).start()
             return
-        self._beginDmgDownload(res)
+        self._begin_dmg_download(res)
 
     def dmgRecheck(self):
         """Result of the retry triggered when the .dmg wasn't published yet."""
         self.update_btn.setEnabled_(True)
         res = self._update_res
         if res is not None and res.update_available and getattr(res, "dmg_url", None):
-            self._beginDmgDownload(res)            # asset landed — proceed
+            self._begin_dmg_download(res)          # asset landed — proceed
         elif res is not None and res.update_available:
             self.update_status.setStringValue_(
                 "Installer isn't published yet — click Download to retry")
         else:
             self.applyUpdate()                     # offline / no longer applicable
 
-    def _beginDmgDownload(self, res):
+    def _begin_dmg_download(self, res):
+        # snake_case on purpose: PyObjC turns a camelCase name behind a single
+        # leading underscore into a no-argument selector, which would make this
+        # whole module fail to import (see scripts/mac_selector_test.py).
         self.update_status.setStringValue_("Downloading update…")
         self.update_btn.setEnabled_(False)
 

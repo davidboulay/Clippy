@@ -27,6 +27,9 @@ jobs:
       - name: Byte-compile all sources
         run: python -m compileall -q clippy scripts
 
+      - name: PyObjC selector prototypes
+        run: PYTHONPATH=. python scripts/mac_selector_test.py
+
       - name: Sync core self-test
         run: PYTHONPATH=. python scripts/sync_selftest.py
 

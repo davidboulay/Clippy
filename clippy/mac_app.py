@@ -42,6 +42,29 @@ def _handle_notification_click(notification):
             pass
 
 
+_SETTINGS_IMPORT_ERROR = None
+
+
+def _settings_controller():
+    """Import SettingsController, remembering a failure verbatim.
+
+    If importing clippy.mac_settings raises, Python drops the half-built module
+    from sys.modules while the Objective-C classes it already defined stay
+    registered in the runtime. A second attempt then dies re-declaring the first
+    of them ("HelpMarker is overriding existing Objective-C class"), hiding the
+    real cause behind a bogus one. Replay the original error instead.
+    """
+    global _SETTINGS_IMPORT_ERROR
+    if _SETTINGS_IMPORT_ERROR is not None:
+        raise _SETTINGS_IMPORT_ERROR
+    try:
+        from .mac_settings import SettingsController
+    except Exception as exc:
+        _SETTINGS_IMPORT_ERROR = exc
+        raise
+    return SettingsController
+
+
 # -- Start at login (LaunchAgent) ---------------------------------------
 def login_installed() -> bool:
     return os.path.exists(_LOGIN_PLIST)
@@ -204,9 +227,8 @@ def run() -> int:
             """Open the Settings window and kick off an update check — the
             landing point for a clicked update notification."""
             try:
-                from .mac_settings import SettingsController
                 if self._settings is None:
-                    self._settings = SettingsController.alloc().initWithEngine_(engine)
+                    self._settings = _settings_controller().alloc().initWithEngine_(engine)
                 self._settings.show()
                 self._settings.checkUpdates_(None)
             except Exception:
@@ -221,9 +243,8 @@ def run() -> int:
                 self._panel_ctrl = PanelController.alloc().init()
 
                 def _open_settings():
-                    from .mac_settings import SettingsController
                     if self._settings is None:
-                        self._settings = SettingsController.alloc().initWithEngine_(engine)
+                        self._settings = _settings_controller().alloc().initWithEngine_(engine)
                     self._settings.show()
                 self._panel_ctrl._open_settings = _open_settings   # cog button → Settings
 
@@ -298,9 +319,8 @@ def run() -> int:
         @rumps.clicked("Settings…")
         def open_settings(self, _):
             try:
-                from .mac_settings import SettingsController
                 if self._settings is None:
-                    self._settings = SettingsController.alloc().initWithEngine_(engine)
+                    self._settings = _settings_controller().alloc().initWithEngine_(engine)
                 self._settings.show()
             except Exception as exc:
                 rumps.alert("Clippy", f"Couldn't open Settings: {exc}")
