@@ -173,24 +173,75 @@ def _make_engine():
         return None
 
 
-def _release_clipboard(entry_id: str) -> None:
-    """On a clipboard change, give up the X11 selection unless the clip is ours.
+_MIRROR_MAX = 6        # publishes allowed per window before we stop mirroring
+_MIRROR_WINDOW = 15    # seconds
+_MIRROR_TIMES: list = []
 
-    The persistent owner shadows the selection for every XWayland app for as long
-    as it holds it, so after another app copies we have to hand it back — otherwise
-    those apps keep pasting the clip Clippy last recovered. Keyed on the entry's
-    content hash, which for images is the same sha256 the owner recorded when it
-    published, so our own publish echoing back as a capture is recognised and kept.
+
+def _mirror_allowed() -> bool:
+    """Rate-cap the capture->publish path as a backstop.
+
+    Publishing changes the selection, which fires ``wl-paste --watch`` again. The
+    echo is normally recognised by content hash, but a clip whose bytes did not
+    survive the round trip byte-for-byte would hash differently every pass and
+    republish forever. A cap turns that into a few wasted publishes instead of a
+    runaway; tripping it leaves the clip alone."""
+    import time
+    now = time.time()
+    recent = [t for t in _MIRROR_TIMES if now - t < _MIRROR_WINDOW]
+    _MIRROR_TIMES[:] = recent
+    if len(recent) >= _MIRROR_MAX:
+        return False
+    _MIRROR_TIMES.append(now)
+    return True
+
+
+def _current_clipboard(entry_id: str) -> None:
+    """Keep the X11 selection in step with the clip that is current right now.
+
+    Xwayland exports *text* selections to X11 but not image ones: after any app
+    copies an image on Wayland, the X11 side is left holding whatever text clip it
+    had, so XWayland apps (Claude Desktop and friends) can never paste it. Measured
+    on cosmic-comp — text crosses with a full target set, images never appear.
+
+    So for an image we mirror it onto the persistent X11 owner, and for anything
+    else we hand the selection back (text already crosses on its own, and holding
+    it would shadow the live clip). Keyed on the entry's content hash: for images
+    that is the same sha256 the owner recorded when publishing, so our own publish
+    echoing back as a capture is recognised as ours rather than mirrored again.
 
     Runs on the IPC server thread (x11clip is lock-guarded); best-effort."""
+    from pathlib import Path
+
     from . import storage
-    digest = None
+    entry = None
     try:
         entry = storage.get(int(entry_id))
-        if entry is not None:
-            digest = entry.hash
     except (TypeError, ValueError, OSError):
         pass
+    digest = entry.hash if entry is not None else None
+
+    if entry is not None and digest == x11clip.published_digest():
+        return                      # already the live X11 selection — our own echo
+    if entry is not None and _mirror_allowed():
+        try:
+            if entry.is_image and entry.image_path:
+                # copy_image publishes X11-only when the owner accepts, so this
+                # never re-sets the Wayland selection (which would echo forever).
+                clipboard.copy_image(Path(entry.image_path).read_bytes(),
+                                     entry.mime or "image/png")
+                return
+            if entry.text:
+                # Text does cross to X11 on its own — but only if Xwayland owns
+                # the selection at the moment it changes. Once we've taken it for
+                # an image, releasing later is too late: Xwayland won't re-export
+                # a change it already missed, leaving X11 with no owner at all. So
+                # once we're in the loop we stay in it, and mirror every flavor.
+                if x11clip.publish(entry.text.encode("utf-8")):
+                    x11clip.note_published(digest)
+                    return
+        except OSError:
+            pass
     try:
         x11clip.release_unless_ours(digest)
     except OSError:
@@ -202,10 +253,10 @@ def _sync_query(engine):
     import json
 
     def query(cmd, arg):
-        # _release is handled before the sync check: it has nothing to do with
+        # _current is handled before the sync check: it has nothing to do with
         # sync and must work when sync is disabled.
-        if cmd == "_release":
-            _release_clipboard(arg.strip())
+        if cmd == "_current":
+            _current_clipboard(arg.strip())
             return "ok"
         if engine is None:
             return "err sync is disabled"

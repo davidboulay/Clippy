@@ -76,10 +76,11 @@ def _cmd_store() -> int:
 
     entry_id = capture_current()
     if entry_id:
-        # Every clipboard change has to reach the daemon: if this clip is not the
-        # one Clippy put there, the persistent X11 owner must hand the selection
-        # back, or XWayland apps stay pinned to the previous clip.
-        ipc.send(f"_release {entry_id}")
+        # Every clipboard change has to reach the daemon so it can keep the X11
+        # selection in step: mirror an image there (Xwayland never exports image
+        # selections, so XWayland apps otherwise can't paste it) and hand the
+        # selection back for anything else.
+        ipc.send(f"_current {entry_id}")
         ipc.send("refresh")
         ipc.send(f"_broadcast {entry_id}")   # broadcast exactly this item
     return 0
