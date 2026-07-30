@@ -291,6 +291,12 @@ def note_published(digest: str) -> None:
         _published = digest
 
 
+def published_digest() -> Optional[str]:
+    """The sha256 hex of the content we currently have on the clipboard, or None."""
+    with _lock:
+        return _published
+
+
 def release_unless_ours(digest: Optional[str]) -> bool:
     """Drop the X11 selection unless ``digest`` is the clip we published.
 
