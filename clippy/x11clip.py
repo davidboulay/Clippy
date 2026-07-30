@@ -49,7 +49,7 @@ import struct
 import subprocess
 import sys
 import threading
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 # Frame protocol (daemon -> helper, over the helper's stdin):
 #   1 byte  kind: b'T' legacy text, b'P' multi-part
@@ -188,6 +188,7 @@ def run() -> int:
 _proc = None                 # the running helper subprocess
 _last = None                 # sha256 of the last frame we published
 _last_frame = None           # that frame, replayed after a respawn
+_published = None            # sha256 hex of the *content* we put on the clipboard
 _lock = threading.Lock()
 
 
@@ -279,6 +280,55 @@ def publish_parts(parts: Sequence[Part]) -> bool:
         return False
     with _lock:
         return _publish_frame(b"P", _encode_parts(parts))
+
+
+def note_published(digest: str) -> None:
+    """Record the sha256 hex of the content we just put on the clipboard, so a
+    capture of our own clip can be told apart from someone else's copy (see
+    ``release_unless_ours``)."""
+    global _published
+    with _lock:
+        _published = digest
+
+
+def release_unless_ours(digest: Optional[str]) -> bool:
+    """Drop the X11 selection unless ``digest`` is the clip we published.
+
+    Called on every clipboard change. Owning the X11 selection is only correct
+    while the clip is ours: an X11 owner shadows the selection for XWayland apps,
+    so keeping it after another app copies pins those apps to a stale clip (and
+    Chromium can hang negotiating against it). Returns True if we released.
+
+    Content-keyed rather than time-keyed because publishing a clip *is* a
+    clipboard change: our own recover comes straight back as a capture, and
+    releasing then would immediately undo the recover."""
+    global _proc, _published, _last, _last_frame
+    with _lock:
+        if digest is not None and digest == _published:
+            return False            # our own echo — keep serving it
+        if _published is None:
+            return False            # we have nothing on the clipboard to give up
+        _published = None
+        # Forget the frame too: start()'s replay-after-respawn must not resurrect
+        # a clip that someone else has since replaced.
+        _last = _last_frame = None
+        # Recycle the helper rather than ask it to clear: GDK has no "disown"
+        # call. Gdk.Clipboard.set_content(None) leaves us owning the selection
+        # with empty content, which shadows XWayland apps just as badly. An X11
+        # selection is released when the owning client disconnects — which is how
+        # the old fire-and-forget xclip managed it, by dying. Spawn a fresh helper
+        # straight away: it owns nothing until we publish, and its presence keeps
+        # Xwayland (which runs with -terminate) from cycling.
+        old, _proc = _proc, None
+        if old is not None:
+            try:
+                if old.stdin is not None:
+                    old.stdin.close()
+                old.terminate()
+            except OSError:
+                pass
+        _proc = _spawn()
+        return True
 
 
 def stop() -> None:

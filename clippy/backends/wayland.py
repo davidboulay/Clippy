@@ -64,7 +64,12 @@ class WaylandBackend:
             return hit
         for t in types:
             low = t.lower()
-            if low.startswith("text/") and not low.startswith("text/html"):
+            # text/uri-list is a *file* flavor that merely starts with "text/".
+            # Falling back to it filed a file clip as a text entry holding the
+            # URI string — which a file-only offer (no text flavor) hits every
+            # time.
+            if (low.startswith("text/") and not low.startswith("text/html")
+                    and low != "text/uri-list"):
                 return t
         return None
 
@@ -127,6 +132,11 @@ class WaylandBackend:
         if staged:
             parts += self._file_parts(staged)
         if x11clip.publish_parts(parts):
+            # Remember what we put there: the next clipboard change is our own
+            # publish coming back as a capture, and it must not be mistaken for
+            # someone else's copy (which releases the selection).
+            import hashlib
+            x11clip.note_published(hashlib.sha256(data).hexdigest())
             # The owner holds the X11 selection and Xwayland re-exposes it as the
             # regular Wayland selection, so native-Wayland *and* XWayland apps
             # both see it. Adding a wl-copy here would be worse than useless: it

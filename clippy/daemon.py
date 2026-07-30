@@ -173,11 +173,40 @@ def _make_engine():
         return None
 
 
+def _release_clipboard(entry_id: str) -> None:
+    """On a clipboard change, give up the X11 selection unless the clip is ours.
+
+    The persistent owner shadows the selection for every XWayland app for as long
+    as it holds it, so after another app copies we have to hand it back — otherwise
+    those apps keep pasting the clip Clippy last recovered. Keyed on the entry's
+    content hash, which for images is the same sha256 the owner recorded when it
+    published, so our own publish echoing back as a capture is recognised and kept.
+
+    Runs on the IPC server thread (x11clip is lock-guarded); best-effort."""
+    from . import storage
+    digest = None
+    try:
+        entry = storage.get(int(entry_id))
+        if entry is not None:
+            digest = entry.hash
+    except (TypeError, ValueError, OSError):
+        pass
+    try:
+        x11clip.release_unless_ours(digest)
+    except OSError:
+        pass
+
+
 def _sync_query(engine):
     """IPC query handler for sync commands (runs on the IPC server thread)."""
     import json
 
     def query(cmd, arg):
+        # _release is handled before the sync check: it has nothing to do with
+        # sync and must work when sync is disabled.
+        if cmd == "_release":
+            _release_clipboard(arg.strip())
+            return "ok"
         if engine is None:
             return "err sync is disabled"
         if cmd == "_broadcast":
