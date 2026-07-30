@@ -7,7 +7,7 @@ pkgdesc="Clipboard history panel for Wayland (COSMIC/wlroots)"
 arch=('any')
 url="https://github.com/davidboulay/Clippy"
 license=('MIT')
-depends=('python' 'python-gobject' 'gtk3' 'gtk-layer-shell'
+depends=('python' 'python-gobject' 'gtk3' 'gtk4' 'gtk-layer-shell'
          'libayatana-appindicator' 'wl-clipboard')
 optdepends=('pipewire: copy sound effect (pw-play)'
             'libpulse: copy sound effect (paplay)'
