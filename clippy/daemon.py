@@ -353,6 +353,19 @@ def _run_headless(engine) -> int:
             signal.signal(sig, lambda *_: stop.set())
         except ValueError:
             pass
+
+    # Same mDNS refresh the GTK path runs on a GLib timer: keep our record alive
+    # and republish it when this machine's address changes, so peers don't keep
+    # sending to the address we happened to have at launch.
+    def _readvertise_loop():
+        while not stop.wait(180):
+            if engine is not None:
+                try:
+                    engine.readvertise()
+                except Exception:
+                    pass
+    threading.Thread(target=_readvertise_loop, daemon=True).start()
+
     try:
         stop.wait()
     finally:

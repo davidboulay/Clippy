@@ -36,6 +36,9 @@ jobs:
       - name: Capture staging guard
         run: PYTHONPATH=. python scripts/capture_staging_test.py
 
+      - name: mDNS readvertise self-test
+        run: PYTHONPATH=. python scripts/sync_readvertise_test.py
+
       - name: Sync core self-test
         run: PYTHONPATH=. python scripts/sync_selftest.py
 

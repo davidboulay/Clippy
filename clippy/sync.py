@@ -398,25 +398,43 @@ class SyncEngine:
 
     def readvertise(self) -> None:
         """Cheap mDNS refresh (no socket teardown) — call periodically so peers
-        that dropped off rediscover us. Safe if discovery isn't up."""
+        that dropped off rediscover us, and so a changed local address is
+        published instead of the one we happened to have at startup.
+
+        Rebuilding matters: ``_info`` is a snapshot, so re-announcing it after a
+        network change just repeats the stale address. Measured — a laptop paired
+        on the LAN joined an iPhone hotspot, registered ``172.20.10.8``, came back
+        to the LAN, and kept advertising the hotspot address. Peers dutifully
+        relearned it (that part is by design) and every send then timed out
+        against an unroutable host until the app was restarted.
+
+        Safe if discovery isn't up."""
         if not _HAVE_ZC or self._zc is None or self._info is None:
             return
+        old = self._info
+        ip = _local_ip()
+        # 127.0.0.1 is what _local_ip falls back to with no route; advertising it
+        # would be worse than keeping a stale address, so leave it alone.
+        changed = (ip != "127.0.0.1"
+                   and socket.inet_aton(ip) not in (old.addresses or []))
+        if changed:
+            self._info = self._service_info(ip)
         try:
             self._zc.update_service(self._info)
         except Exception:
             try:
-                self._zc.unregister_service(self._info)
+                self._zc.unregister_service(old)
                 self._zc.register_service(self._info)
             except Exception:
                 pass
+        if changed:
+            _log(f"mDNS: local address changed to {ip} — re-advertised")
 
     # -- discovery (mDNS) ------------------------------------------------
-    def _advertise(self) -> None:
-        if not _HAVE_ZC:
-            return
-        ip = _local_ip()
-        self._zc = Zeroconf()
-        self._info = ServiceInfo(
+    def _service_info(self, ip: str):
+        """The mDNS record we publish for this device. Built in one place so an
+        address refresh can't drift from the original registration."""
+        return ServiceInfo(
             config.SYNC_SERVICE,
             f"{self.device_id}.{config.SYNC_SERVICE}",
             addresses=[socket.inet_aton(ip)],
@@ -427,6 +445,12 @@ class SyncEngine:
                 "fp": self.fingerprint(),
             },
         )
+
+    def _advertise(self) -> None:
+        if not _HAVE_ZC:
+            return
+        self._zc = Zeroconf()
+        self._info = self._service_info(_local_ip())
         try:
             self._zc.register_service(self._info)
         except Exception:
