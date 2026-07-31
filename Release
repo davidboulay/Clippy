@@ -1,0 +1,23 @@
+Architectures: all
+Codename: stable
+Components: main
+Date: Fri, 31 Jul 2026 22:18:17 +0000
+Label: Clippy
+Origin: Clippy
+Suite: stable
+MD5Sum:
+ 4fd19f8c131b8ca59efa64381867bb06            36237 Packages
+ 032d930e376d55f91a5d57f5e0ab7861             4647 Packages.gz
+ 48514b5939152a764a404e3854e26323              134 Release
+SHA1:
+ ea9a8998f1469c04df9ca33c3cbc7ca1fda5f127            36237 Packages
+ 48fc7203232a5ff07e05c91099c38f69571eedee             4647 Packages.gz
+ 6ec7e20dfb8828bb28bf7f9695e930286dc87cad              134 Release
+SHA256:
+ f516cb5a68596365812f6e162f141471d0beb4c9873c7b9ba49d4d77cac57dd1            36237 Packages
+ b438df63debcb60967dcb444daa2dc270303efccc540e8af932edd1144a509a4             4647 Packages.gz
+ 867b9a3389912ee105f58a9070b8d429bfed971e9c4f9141956925d773182f68              134 Release
+SHA512:
+ 8be018776cc37e9195af2a08da45108bac53d89f34e635e0b1082b853d5d92f21b230d0c5f7eadb5158cff5c01f87a7a95cd2bf60863f311c1f3ca3d3d97047c            36237 Packages
+ 5616680ffce46e37bc935a64001aae8bffb060b59dac8157d4d5630c72494b106fbdcf2b8c446d8530a9e121461b1c98f0697cd8fe6cbdd8185f610fdce423a3             4647 Packages.gz
+ 20eab19d8fa6db14228de8df0b5c0924491e32f074da9bd88d42eb079d0f824278c8685083cb61b8c5bda036c1282cffe35345c323962be77b067eeaa60a446d              134 Release
