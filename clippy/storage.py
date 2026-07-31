@@ -279,7 +279,7 @@ def paste_path(entry) -> Optional[str]:
         return None
     name = os.path.basename(entry.filename or "") or os.path.basename(blob)
     try:
-        stage = config.DATA_DIR / "paste"
+        stage = config.PASTE_DIR
         stage.mkdir(parents=True, exist_ok=True)
         dest = stage / name
         # Re-stage unless an identical copy is already there (size match is a

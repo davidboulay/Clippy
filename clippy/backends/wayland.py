@@ -158,12 +158,16 @@ class WaylandBackend:
         """Write the image somewhere it can be referenced as a *file*, under a
         human-friendly name — a file-drop paste is named after the URI, and the
         content-addressed blob is named after its sha256. Rewritten per recover;
-        returns None if it can't be staged (callers then offer bytes only)."""
+        returns None if it can't be staged (callers then offer bytes only).
+
+        Lives in ``FLAVOR_DIR``, apart from the recovered-file staging in
+        ``PASTE_DIR``, because ``capture._is_own_staging`` has to ignore the echo
+        this produces without also ignoring a genuine file recover."""
         import os
         ext = {"image/jpeg": "jpg", "image/jpg": "jpg", "image/bmp": "bmp",
                "image/tiff": "tiff"}.get(mime.lower(), "png")
         try:
-            stage = config.DATA_DIR / "paste"
+            stage = config.FLAVOR_DIR
             stage.mkdir(parents=True, exist_ok=True)
             dest = stage / f"image.{ext}"
             tmp = stage / f".image.{ext}.tmp"

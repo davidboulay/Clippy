@@ -79,15 +79,21 @@ def sniff_image_mime(data: bytes) -> Optional[str]:
 
 
 def _is_own_staging(path: str) -> bool:
-    """True for a file URI that is Clippy's *own* staged copy (``DATA_DIR/paste``).
+    """True only for the throwaway image written to back an image's *file* flavor.
 
-    Taking durable ownership of an image also offers it as a file, so the very
-    next ``wl-paste --watch`` tick sees a uri-list pointing into our staging dir.
+    Taking durable ownership of an image can also offer it as a file, so the very
+    next ``wl-paste --watch`` tick sees a uri-list pointing into our own staging.
     Without this guard that echo would be filed as a separate *file* entry on
-    every image copy."""
+    every image copy.
+
+    Scoped to ``FLAVOR_DIR``, not the whole of ``PASTE_DIR``. Recovering a file
+    entry stages a copy under its original name in ``PASTE_DIR`` too, and while
+    both lived in one directory this guard dropped those as well: capture
+    returned None, so ``_store`` sent no ``_broadcast`` and never reached
+    ``sound.play()`` — recovering a file was silent and didn't sync."""
     import os
     try:
-        stage = os.path.realpath(str(config.DATA_DIR / "paste"))
+        stage = os.path.realpath(str(config.FLAVOR_DIR))
         return os.path.commonpath([os.path.realpath(path), stage]) == stage
     except (OSError, ValueError):
         return False

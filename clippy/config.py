@@ -25,6 +25,14 @@ IMAGE_DIR = DATA_DIR / "images"
 FILE_DIR = DATA_DIR / "files"           # stored non-image file payloads
 RECV_DIR = DATA_DIR / "received"        # files received from peers (clipboard refs them)
 THUMB_DIR = DATA_DIR / "thumbs"         # cached preview thumbnails (e.g. video frames)
+# Two kinds of staging, kept apart on purpose. PASTE_DIR holds a recovered file
+# under its *original* name so a file-drop paste isn't named after its content
+# hash; that copy is a genuine user clip and capture must see it. FLAVOR_DIR
+# holds the throwaway image written when a clip is also offered as a file, whose
+# uri-list bounces straight back through wl-paste --watch; capture must ignore
+# only that. Sharing one directory made the ignore rule swallow both.
+PASTE_DIR = DATA_DIR / "paste"
+FLAVOR_DIR = PASTE_DIR / ".image-flavor"
 SOCKET_PATH = RUNTIME_DIR / "clippy.sock"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
