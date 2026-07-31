@@ -39,6 +39,9 @@ jobs:
       - name: mDNS readvertise self-test
         run: PYTHONPATH=. python scripts/sync_readvertise_test.py
 
+      - name: X11 takeover gate
+        run: PYTHONPATH=. python scripts/x11_takeover_gate_test.py
+
       - name: Sync core self-test
         run: PYTHONPATH=. python scripts/sync_selftest.py
 
