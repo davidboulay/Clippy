@@ -33,6 +33,9 @@ jobs:
       - name: Mac pasteboard MIME honesty
         run: PYTHONPATH=. python scripts/mac_pasteboard_test.py
 
+      - name: Capture staging guard
+        run: PYTHONPATH=. python scripts/capture_staging_test.py
+
       - name: Sync core self-test
         run: PYTHONPATH=. python scripts/sync_selftest.py
 
