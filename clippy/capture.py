@@ -33,6 +33,33 @@ def _should_play_sound(entry_id: int) -> bool:
     return True
 
 
+# Magic bytes per image type. Reading our own clip back through data-control can
+# return the payload with a 4-byte little-endian length prefix glued on the front
+# (measured: `d6 a6 07 00` + a 501462-byte PNG, i.e. the length itself). That is
+# not a valid image, but it *is* new bytes, so it hashes differently and lands as
+# a fresh entry — a duplicate tile that renders as "image unavailable". Left
+# unchecked it compounds: each pass prefixes the previous one, which is what drove
+# a 213-entry runaway with sizes climbing +4 each round.
+_IMAGE_MAGIC = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/jpg": (b"\xff\xd8\xff",),
+    "image/bmp": (b"BM",),
+    "image/tiff": (b"II*\x00", b"MM\x00*"),
+}
+
+
+def _looks_like_image(data: bytes, mime: str) -> bool:
+    """True unless we can positively tell the bytes are not the image they claim.
+
+    Only rejects when the magic for a *known* type is missing, so an unrecognised
+    image type is still stored rather than silently dropped."""
+    magic = _IMAGE_MAGIC.get((mime or "").split(";")[0].strip().lower())
+    if not magic:
+        return True
+    return any(data.startswith(m) for m in magic)
+
+
 def _is_own_staging(path: str) -> bool:
     """True for a file URI that is Clippy's *own* staged copy (``DATA_DIR/paste``).
 
@@ -77,6 +104,8 @@ def capture_current():
         # Image DATA copied from an app (e.g. Copy Image), no file involved.
         image_mime = clipboard.pick_image_type(types)
         data = clipboard.read_bytes(image_mime)
+        if data and not _looks_like_image(data, image_mime):
+            return None          # corrupt read (see _IMAGE_MAGIC) — don't file it
         if data:
             new_id = storage.add_image(data, image_mime)
     else:

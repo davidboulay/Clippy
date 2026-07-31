@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from typing import Callable, List, Optional
 
-from .. import config, x11clip
+from .. import config, settings, x11clip
 from .base import ClipboardError
 
 
@@ -128,7 +128,12 @@ class WaylandBackend:
         # otherwise paste an empty file. Only the persistent owner can offer
         # both at once; wl-copy and xclip serve one type per invocation.
         parts = [(mime, data)]
-        staged = self._stage_image(data, mime)
+        # Only when asked: a consumer that understands both flavors may act on
+        # both, and chat apps do exactly that (Slack attaches the image *and* an
+        # empty file per file flavor). We cannot tell consumers apart from here,
+        # so the common case — pasting into chat — wins by default.
+        staged = (self._stage_image(data, mime)
+                  if settings.get("image_file_flavors") else None)
         if staged:
             parts += self._file_parts(staged)
         if x11clip.publish_parts(parts):
