@@ -251,20 +251,29 @@ def _current_clipboard(entry_id: str) -> None:
         pass
     digest = entry.hash if entry is not None else None
 
-    # MIRRORING ON CAPTURE IS DISABLED — it destroys the clipboard on this
-    # compositor. Taking the X11 selection gets bounced back: cosmic-comp copies
-    # our X11 offer into the Wayland selection, then Xwayland re-takes the X11
-    # selection ~35s later to proxy that Wayland offer — and Xwayland cannot serve
-    # image data, so both channels end up advertising an offer nothing backs. The
-    # clipboard dies everywhere, not just in XWayland apps, which is strictly
-    # worse than the gap it was meant to close. Measured: our helper holds it with
-    # is_local=True for ~35s, then is_local=False and every flavor reads 0 bytes
-    # on both X11 *and* the regular Wayland selection.
+    # MIRRORING ON CAPTURE IS OFF BY DEFAULT — see `x11_image_takeover`.
     #
-    # The real bug is Xwayland failing to relay image data from the Wayland
-    # selection; a mirror can only race it. Left here, disabled, so the next
-    # attempt starts from what was measured rather than from scratch.
-    _MIRROR_ON_CAPTURE = False
+    # Shipped in 1.4.21, reverted in 1.4.22: taking the X11 selection got bounced
+    # back — cosmic-comp copies our X11 offer into the Wayland selection, then
+    # Xwayland re-takes X11 ~35s later to proxy that Wayland offer, and Xwayland
+    # cannot serve image data, so both channels ended up advertising an offer
+    # nothing backs. Measured then: our helper holds it with is_local=True for
+    # ~35s, then is_local=False and every flavor reads 0 bytes on both channels.
+    #
+    # What that reasoning missed, measured since with the GTK consumer probe: the
+    # *panel recover* path publishes through this same helper and does NOT decay —
+    # 22211 bytes fetched in 0.0s at t+8s, t+46s and t+85s, decoding fine. So
+    # owning X11 is not what breaks; the difference is that a recover displaces
+    # the previous owner, while a capture-time grab races an app that still holds
+    # the Wayland selection. Two authorities for one selection is the failure
+    # class, which is the same conclusion the CosmicShot side reached.
+    #
+    # That makes capture-time takeover worth retesting rather than assuming dead,
+    # but it is a hypothesis until someone copies from a real app with the switch
+    # on. Hence opt-in, images only, behind the existing `_mirror_allowed()`
+    # rate-cap. If it regresses, the symptom is both channels going empty a few
+    # seconds after any image copy.
+    _MIRROR_ON_CAPTURE = bool(settings.get("x11_image_takeover"))
 
     if entry is not None and digest == x11clip.published_digest():
         return                      # already the live X11 selection — our own echo

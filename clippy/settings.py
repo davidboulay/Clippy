@@ -21,6 +21,22 @@ DEFAULTS: Dict[str, Any] = {
     # image plus empty duplicates. Pasting into chat is the common case, so this
     # is off by default.
     "image_file_flavors": False,
+    # EXPERIMENTAL. After any app copies an image on Wayland, take the X11
+    # selection and serve the bytes ourselves, so XWayland apps (Claude Desktop
+    # runs --ozone-platform=x11) can paste it. Without this they get nothing:
+    # Xwayland exports text selections to X11 but never image ones, and a
+    # wlr-data-control clip (what CosmicShot's wl-copy writes) never reaches X11
+    # at all. Recovering the same clip from the panel already works, because that
+    # path makes us the selection owner — measured serving in 0.0s and still
+    # doing so 85s later.
+    #
+    # Off by default because doing it *at capture time* was shipped in 1.4.21 and
+    # reverted in 1.4.22: grabbing X11 while the copying app still holds the
+    # Wayland selection was measured to leave both channels dead after ~35s. The
+    # 85s recover measurement says that collapse is about two owners contending,
+    # not about us owning X11 — but that is a hypothesis until this is tested on
+    # a real copy, which is what this switch is for.
+    "x11_image_takeover": False,
     "retention": "1m",
     # "system" follows COSMIC's light/dark; or force "dark" / "light".
     "theme_mode": "system",
