@@ -71,7 +71,10 @@ _SYNC_LOG = config.DATA_DIR / "sync.log"
 def _log(msg: str) -> None:
     """Append a diagnostic line to <data>/sync.log (GUI apps swallow stdout).
 
-    Self-bounds the file so it can't grow without limit."""
+    Every delivery is recorded, successes included — a log that only spoke up on
+    retries and failures made a healthy idle sync and a dead one look identical,
+    and reading that silence as "nothing was even attempted" cost two wrong
+    diagnoses. Self-bounds the file so it can't grow without limit."""
     try:
         _SYNC_LOG.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -742,9 +745,8 @@ class SyncEngine:
                 try:
                     with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
                         _send_frame(s, frame)
-                    if attempt or (ip, port) != addrs[0]:
-                        _log(f"text: delivered to {name} via {ip}:{port} "
-                             f"(attempt {attempt + 1})")
+                    _log(f"text: delivered to {name} via {ip}:{port} "
+                         f"(attempt {attempt + 1})")
                     self._seen_add(h)
                     return
                 except Exception as exc:
@@ -789,8 +791,7 @@ class SyncEngine:
                     _send_raw(s, b"")          # end-of-stream marker
                 if show:
                     self._on_progress(name, total, total, True)
-                if (ip, port) != addrs[0]:
-                    _log(f"media: '{name}' delivered to {pname} via {ip}:{port}")
+                _log(f"media: '{name}' delivered to {pname} via {ip}:{port}")
                 self._seen_add(h)
                 return
             except Exception as exc:

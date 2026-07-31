@@ -10,6 +10,7 @@ Mirrors ``scripts/sync_selftest.py``'s two-in-process-engines harness. Proves:
 Run:  PYTHONPATH=. python3 scripts/sync_drift_test.py
 """
 import hashlib
+import pathlib
 import sys
 import tempfile
 import time
@@ -23,6 +24,9 @@ import clippy.clipboard as cb    # noqa: E402
 if not sync.sync_available():
     print("FAIL: pynacl/zeroconf not installed")
     raise SystemExit(1)
+
+# Keep the run out of the real <data>/sync.log — this is a test, not traffic.
+sync._SYNC_LOG = pathlib.Path(tempfile.mkdtemp()) / "sync.log"
 
 A = sync.SyncEngine(port=48011, state_dir=tempfile.mkdtemp())
 B = sync.SyncEngine(port=48012, state_dir=tempfile.mkdtemp())
