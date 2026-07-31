@@ -177,6 +177,12 @@ def run() -> int:
             self._hotkey = None
             rumps.Timer(self._tick_progress, 0.4).start()
             rumps.Timer(self._tick_status, 5).start()
+            # Keep our mDNS record fresh, and republish it if this machine's
+            # address changed. Without this the Mac advertised whatever IP it
+            # had at launch forever: joining a hotspot and returning to the LAN
+            # left peers sending to an unroutable address until a restart.
+            # (The GTK daemon has had this timer; the Mac path never did.)
+            rumps.Timer(self._tick_readvertise, 180).start()
             rumps.Timer(self._fix_retina_icon, 1).start()  # one-shot (stops itself)
             rumps.Timer(self._setup_panel, 0.3).start()    # one-shot (stops itself)
             # Auto-update check: once ~30s after launch, then every 6h. Each run
@@ -301,6 +307,12 @@ def run() -> int:
                 if img is not None:
                     img.setTemplate_(True)
                     self._nsapp.nsstatusitem.button().setImage_(img)
+            except Exception:
+                pass
+
+        def _tick_readvertise(self, _timer):
+            try:
+                engine.readvertise()
             except Exception:
                 pass
 
