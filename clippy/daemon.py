@@ -268,11 +268,20 @@ def _current_clipboard(entry_id: str) -> None:
     # the Wayland selection. Two authorities for one selection is the failure
     # class, which is the same conclusion the CosmicShot side reached.
     #
-    # That makes capture-time takeover worth retesting rather than assuming dead,
-    # but it is a hypothesis until someone copies from a real app with the switch
-    # on. Hence opt-in, images only, behind the existing `_mirror_allowed()`
-    # rate-cap. If it regresses, the symptom is both channels going empty a few
-    # seconds after any image copy.
+    # That contention theory was then TESTED, on a real CosmicShot copy with the
+    # switch on, and it is WRONG: still empty images in Claude Desktop. Displacing
+    # the previous owner is not what makes a recover work. Three mechanisms have
+    # now been tried — the 1.4.21 fire-and-forget xclip mirror, a bounded
+    # re-assert in the helper, and this persistent-owner publish — and all three
+    # fail at capture time while all three work on recover.
+    #
+    # So the switch stays, default off, as the record of the attempt rather than
+    # an invitation: turning it on reproduces the failure, it does not fix it. A
+    # fourth attempt needs a genuinely new model of why Xwayland treats a
+    # selection it has already seen change differently from one it has not —
+    # not another way to take the same selection at the same moment.
+    #
+    # The working answer is the panel recover: click the tile, then paste.
     _MIRROR_ON_CAPTURE = bool(settings.get("x11_image_takeover"))
 
     if entry is not None and digest == x11clip.published_digest():

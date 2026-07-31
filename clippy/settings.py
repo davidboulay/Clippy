@@ -30,12 +30,13 @@ DEFAULTS: Dict[str, Any] = {
     # path makes us the selection owner — measured serving in 0.0s and still
     # doing so 85s later.
     #
-    # Off by default because doing it *at capture time* was shipped in 1.4.21 and
-    # reverted in 1.4.22: grabbing X11 while the copying app still holds the
-    # Wayland selection was measured to leave both channels dead after ~35s. The
-    # 85s recover measurement says that collapse is about two owners contending,
-    # not about us owning X11 — but that is a hypothesis until this is tested on
-    # a real copy, which is what this switch is for.
+    # KNOWN NOT TO WORK on cosmic-comp — leave it off. Doing this at capture time
+    # was shipped in 1.4.21 and reverted in 1.4.22 (both channels dead ~35s after
+    # a copy). Retried here on the theory that the collapse was two owners
+    # contending rather than us owning X11, since the recover path holds fine at
+    # t+85s — and tested on a real copy: still empty images. Three mechanisms have
+    # failed at capture time and all three work on recover. Kept as the record of
+    # the attempt; turning it on reproduces the failure rather than fixing it.
     "x11_image_takeover": False,
     "retention": "1m",
     # "system" follows COSMIC's light/dark; or force "dark" / "light".
