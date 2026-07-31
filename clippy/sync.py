@@ -570,14 +570,19 @@ class SyncEngine:
         from . import clipboard
         kind = manifest.get("kind")
         mime = manifest.get("mime") or "application/octet-stream"
-        name = _name_with_ext(os.path.basename(manifest.get("name") or "file") or "file", mime)
         try:
             if kind == "image":
                 data = open(tmp, "rb").read()
+                mime = self._verified_image_mime(data, mime, manifest)
+                if mime is None:
+                    self._safe_unlink(tmp)
+                    return
                 storage.add_image(data, mime)
                 clipboard.copy_image(data, mime)
                 self._safe_unlink(tmp)
             else:
+                name = _name_with_ext(
+                    os.path.basename(manifest.get("name") or "file") or "file", mime)
                 dest = self._unique_path(config.RECV_DIR / name)
                 shutil.move(tmp, dest)
                 storage.add_file_from_path(str(dest), name, mime)
@@ -585,6 +590,35 @@ class SyncEngine:
             self._notify_received()
         except Exception:
             self._safe_unlink(tmp)
+
+    @staticmethod
+    def _verified_image_mime(data: bytes, mime: str, manifest) -> Optional[str]:
+        """The MIME to file received image bytes under, or None to drop them.
+
+        A peer's manifest label is a claim about bytes we didn't read ourselves,
+        and a wrong one poisons history: the bytes are stored *and* pushed onto
+        the clipboard, so every consumer that trusts the label fails to decode
+        and pastes an empty image. Measured case — macOS puts ``public.tiff`` on
+        the pasteboard for most copied images, and the mac backend labels it
+        ``image/png`` regardless, so uncompressed TIFF arrived here wearing a PNG
+        label. ``capture.py`` already sniffs magic for locally-read clips; this
+        closes the same gap on the receive side.
+
+        Conservative in the same way ``_looks_like_image`` is: only a *positively*
+        wrong label is acted on, so an image type we have no magic for (webp,
+        gif, avif, …) still passes through untouched."""
+        from .capture import _looks_like_image, sniff_image_mime
+        base = (mime or "").split(";")[0].strip().lower()
+        if _looks_like_image(data, base):
+            return mime
+        name = os.path.basename(manifest.get("name") or "") or "image"
+        actual = sniff_image_mime(data)
+        if actual:
+            _log(f"media: '{name}' claimed {base}, magic says {actual} — relabelled")
+            return actual
+        _log(f"media: '{name}' claimed {base} but matches no known image magic "
+             f"({data[:8].hex(' ')}) — rejected")
+        return None
 
     def _notify_received(self) -> None:
         cb = self._on_received

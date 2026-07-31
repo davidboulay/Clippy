@@ -5,6 +5,8 @@ and by the daemon's one-shot capture at startup. GTK-free on purpose.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from . import clipboard, config, settings, sound, storage
 
 # When Clippy mirrors an image/file copy to the X11 clipboard, XWayland
@@ -58,6 +60,22 @@ def _looks_like_image(data: bytes, mime: str) -> bool:
     if not magic:
         return True
     return any(data.startswith(m) for m in magic)
+
+
+def sniff_image_mime(data: bytes) -> Optional[str]:
+    """The image type `data` actually *is*, from its magic — or None when it
+    matches nothing we know. The inverse of ``_looks_like_image``, which only
+    checks bytes against a claim; this derives the claim from the bytes so a
+    mislabelled payload can be corrected instead of merely rejected.
+
+    ``image/jpg`` is skipped in favour of the canonical ``image/jpeg`` (both
+    share one magic, so iteration order would otherwise decide it)."""
+    for mime, magic in _IMAGE_MAGIC.items():
+        if mime == "image/jpg":
+            continue
+        if any(data.startswith(m) for m in magic):
+            return mime
+    return None
 
 
 def _is_own_staging(path: str) -> bool:
