@@ -15,6 +15,12 @@ DEFAULTS: Dict[str, Any] = {
     # Which copy sound to play (see sound.SOUND_CHOICES).
     "sound_choice": "tap",
     "always_plain_text": False,
+    # Offer a recovered image as a *file* as well as raw bytes. File-drop targets
+    # (COSMIC Files, the VS Code Explorer) can only paste an image that way, but
+    # chat apps that accept both make one attachment per flavor — Slack shows the
+    # image plus empty duplicates. Pasting into chat is the common case, so this
+    # is off by default.
+    "image_file_flavors": False,
     "retention": "1m",
     # "system" follows COSMIC's light/dark; or force "dark" / "light".
     "theme_mode": "system",
