@@ -1,10 +1,23 @@
 name: APT repository
 
 # Publish/refresh the GitHub-Pages-hosted APT repository (davidboulay.github.io/
-# Clippy) whenever a release is published, so `sudo apt upgrade` picks up new
-# versions. Can also be run manually. The repo is rebuilt from *all* release
-# .debs each time, so it stays cumulative and re-runs are idempotent.
+# Clippy) so `sudo apt upgrade` picks up new versions. The repo is rebuilt from
+# *all* release .debs each time, so it stays cumulative and re-runs are
+# idempotent — which is what makes the three entry points below safe.
+#
+# `workflow_call` is the one that matters. `release.yml` publishes with
+# ${{ github.token }}, and GitHub deliberately does not raise workflow-triggering
+# events for anything a GITHUB_TOKEN did — so `on: release` never fired for a
+# tag-driven release. This ran exactly once in its first month (a manual
+# dispatch) while 1.4.16, 1.4.17, 1.4.23 and 1.4.25 shipped without the APT index
+# ever being rebuilt. Being *called* by release.yml doesn't depend on event
+# delivery at all, so it can't silently skip again.
+#
+# `release: published` is kept for releases a human (or a PAT) publishes through
+# the UI, which release.yml never sees. `workflow_dispatch` stays for backfills.
+# Double-runs are prevented by the concurrency group and harmless regardless.
 on:
+  workflow_call:
   release:
     types: [published]
   workflow_dispatch:

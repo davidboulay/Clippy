@@ -53,3 +53,19 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" dist/*.dmg --clobber \
           || gh release create "${GITHUB_REF_NAME}" dist/*.dmg \
                --title "${GITHUB_REF_NAME}" --generate-notes
+
+  # Rebuild the APT index so `apt upgrade` sees this version. Called directly
+  # rather than left to apt-repo.yml's `on: release` trigger: we publish the
+  # release with ${{ github.token }}, and GitHub raises no workflow-triggering
+  # event for a GITHUB_TOKEN action, so that trigger never fired for a tagged
+  # release — four versions shipped without the index being rebuilt. A direct
+  # call needs no event delivery, so it cannot silently skip.
+  #
+  # `needs: macos` is transitively after `deb` (macos already needs it), so the
+  # release exists with its .deb attached before the index is collected.
+  apt:
+    needs: macos
+    permissions:
+      contents: write
+    secrets: inherit          # apt-repo needs APT_GPG_PRIVATE_KEY to sign
+    uses: ./.github/workflows/apt-repo.yml
