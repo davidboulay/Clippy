@@ -97,13 +97,17 @@ cb.copy_file = lambda path: recv.__setitem__("copyfile", path)
 prog = []
 A._on_progress = lambda name, sent, total, done: prog.append((sent, total, done))
 
-def _blob(size):
+def _blob(size, magic=b""):
+    # `magic` leads the payload so a blob announced as a given image type still
+    # looks like one: the receive path sniffs magic and drops bytes that don't
+    # match their declared MIME, so a purely random "image/png" would be
+    # rejected as poison rather than exercising the transfer.
     p = tempfile.mkstemp(prefix="clippy-blob-")[1]
-    data = os.urandom(size)
+    data = magic + os.urandom(size - len(magic))
     open(p, "wb").write(data)
     return p, data, hashlib.sha256(data).hexdigest()
 
-bp, bdata, bhash = _blob(6 * 1024 * 1024)
+bp, bdata, bhash = _blob(6 * 1024 * 1024, magic=b"\x89PNG\r\n\x1a\n")
 class IMG:
     kind = "image"; mime = "image/png"; image_path = bp; size = len(bdata)
     filename = None; hash = bhash; text = None
@@ -142,6 +146,21 @@ A._broadcast_entry(BIG())
 time.sleep(0.8)
 assert not recv, "oversize transfer should be refused"
 print("11. oversize transfer refused (size cap)")
+
+# A peer's MIME label is a claim about bytes we never read ourselves. Measured
+# case: macOS puts public.tiff on the pasteboard for most copied images and the
+# mac backend labels it image/png, so uncompressed TIFF arrived wearing a PNG
+# label — stored *and* pushed onto the clipboard, where every consumer that
+# trusted the label pasted an empty image.
+_vet = A._verified_image_mime
+_PNG8 = b"\x89PNG\r\n\x1a\n"
+assert _vet(_PNG8, "image/png", {}) == "image/png", "valid PNG should pass untouched"
+assert _vet(b"MM\x00*rest", "image/png", {}) == "image/tiff", "TIFF-as-PNG should be relabelled"
+assert _vet(b"\xff\xd8\xffx", "image/jpg", {}) == "image/jpg", "jpg/jpeg alias must not churn"
+assert _vet(b"RIFF....WEBP", "image/webp", {}) == "image/webp", "unknown magic passes through"
+assert _vet(b"\xd6\xa6\x07\x00" + _PNG8, "image/png", {}) is None, "length-prefixed PNG must be dropped"
+assert _vet(b"not an image at all", "image/png", {}) is None, "unidentifiable bytes must be dropped"
+print("12. mislabelled inbound media relabelled or rejected")
 
 A.stop(); B.stop()
 print("\n✅ ALL SYNC CORE TESTS PASSED")
