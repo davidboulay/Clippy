@@ -11,6 +11,7 @@ Run:  PYTHONPATH=. python3 scripts/sync_selftest.py
 Needs: python3-nacl + python3-zeroconf  (or: pip install --user pynacl zeroconf)
 """
 import hashlib
+import pathlib
 import sys
 import tempfile
 import time
@@ -24,6 +25,9 @@ if not sync.sync_available():
     print("FAIL: pynacl/zeroconf not installed "
           "(sudo apt install python3-nacl python3-zeroconf)")
     raise SystemExit(1)
+
+# Keep the run out of the real <data>/sync.log — this is a test, not traffic.
+sync._SYNC_LOG = pathlib.Path(tempfile.mkdtemp()) / "sync.log"
 
 A = sync.SyncEngine(port=48001, state_dir=tempfile.mkdtemp())
 B = sync.SyncEngine(port=48002, state_dir=tempfile.mkdtemp())

@@ -6,12 +6,16 @@ silently-dropped clips:
   1. delivery falls back to the stored address when the (first) mDNS address is
      unreachable — a stale mDNS record or dual-homed peer no longer loses the clip;
   2. the hash is marked 'seen' only after a send *succeeds*, so a totally failed
-     send doesn't suppress a later re-copy of the same content.
+     send doesn't suppress a later re-copy of the same content;
+  3. every delivery is logged, the first-attempt success included — the log used
+     to stay silent unless a send retried or fell back, so an idle sync was
+     indistinguishable from a broken one.
 
 Run:  PYTHONPATH=. python3 scripts/sync_delivery_test.py
 Needs: python3-nacl + python3-zeroconf
 """
 import hashlib
+import pathlib
 import sys
 import tempfile
 import time
@@ -24,6 +28,16 @@ import clippy.clipboard as cb    # noqa: E402
 if not sync.sync_available():
     print("FAIL: pynacl/zeroconf not installed")
     raise SystemExit(1)
+
+# Assert on what gets logged — and keep this run out of the real sync.log.
+sync._SYNC_LOG = pathlib.Path(tempfile.mkdtemp()) / "sync.log"
+
+
+def _log_lines():
+    try:
+        return sync._SYNC_LOG.read_text().splitlines()
+    except OSError:
+        return []
 
 A = sync.SyncEngine(port=48051, state_dir=tempfile.mkdtemp())
 B = sync.SyncEngine(port=48052, state_dir=tempfile.mkdtemp())
@@ -82,6 +96,22 @@ assert B._seen_has(hx), "freshly-added hash should be seen (echo suppression)"
 B._seen[hx] = time.time() - sync._SEEN_TTL - 1          # backdate past the TTL
 assert not B._seen_has(hx), "an expired hash must no longer be 'seen' (re-copy re-syncs)"
 print("5. 'seen' entry expires after the TTL — re-copying an item later re-syncs")
+
+# --- 6. a clean first-attempt delivery is logged, not silent -----------------
+# The regression this guards: the log line was gated on `attempt or (ip, port)
+# != addrs[0]`, so the healthy path wrote nothing and an idle sync read exactly
+# like a dead one.
+_T3 = "logged even when nothing goes wrong"
+h3 = hashlib.sha256(_T3.encode()).hexdigest()
+env3 = dict(env, text=_T3, hash=h3)
+before = len(_log_lines())
+B._deliver_text([("127.0.0.1", 48051)], peer, h3, json.dumps(env3).encode())
+time.sleep(0.5)
+new = _log_lines()[before:]
+assert any("delivered" in ln and "127.0.0.1:48051" in ln and "attempt 1" in ln
+           for ln in new), \
+    f"a first-attempt delivery to the primary address must be logged, got {new}"
+print("6. first-attempt delivery to the primary address is logged")
 
 A.stop(); B.stop()
 print("\n✅ DELIVERY HARDENING TESTS PASSED")
