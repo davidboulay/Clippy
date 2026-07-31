@@ -30,6 +30,9 @@ jobs:
       - name: PyObjC selector prototypes
         run: PYTHONPATH=. python scripts/mac_selector_test.py
 
+      - name: Mac pasteboard MIME honesty
+        run: PYTHONPATH=. python scripts/mac_pasteboard_test.py
+
       - name: Sync core self-test
         run: PYTHONPATH=. python scripts/sync_selftest.py
 

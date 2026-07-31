@@ -55,6 +55,8 @@ class MacBackend:
         # bail at `if not types` before read_file_paths is ever consulted.
         if _FILE_URL in types or _FILENAMES in types:
             out.append("text/uri-list")
+        # PNG for either rep: a promise `read_bytes` keeps by transcoding the
+        # TIFF-only case, so callers never get TIFF wearing a PNG label.
         if _PNG in types or _TIFF in types:
             out.append("image/png")
         if _TEXT in types or self._pb.stringForType_(_TEXT):
@@ -78,12 +80,55 @@ class MacBackend:
         return self._pb.stringForType_(uti) or ""
 
     def read_bytes(self, mime: str) -> bytes:
-        order = (_PNG, _TIFF) if "png" in mime else (_TIFF, _PNG)
+        """Image bytes in the flavor the caller actually asked for.
+
+        ``list_types`` advertises ``image/png`` whenever the pasteboard holds any
+        image, but macOS most often offers only ``public.tiff`` — Preview, Safari's
+        Copy Image and screenshots all do. Returning those TIFF bytes under a PNG
+        label is what filed uncompressed TIFF into history as an ``image/png``
+        entry: a tile that renders broken and pastes as an empty image, here and
+        on every device it syncs to. So honour the claim rather than mislabel it —
+        transcode. (It also shrinks the payload a lot; the TIFF flavor is
+        uncompressed, e.g. 1.59 MB for a 778x510 grab.)
+
+        If the transcode fails we return nothing at all. Handing back TIFF under
+        a PNG label is the bug this exists to prevent, and a dropped clip is the
+        lesser failure."""
+        want_png = "png" in mime
+        order = (_PNG, _TIFF) if want_png else (_TIFF, _PNG)
         for uti in order:                       # whichever rep the app provided
             data = self._pb.dataForType_(uti)
-            if data is not None:
-                return bytes(data)
+            if data is None:
+                continue
+            raw = bytes(data)
+            if not want_png or uti == _PNG:
+                return raw
+            return self._tiff_to_png(raw)
         return b""
+
+    @staticmethod
+    def _tiff_to_png(data: bytes) -> bytes:
+        """`data` (a TIFF rep) re-encoded as PNG, or b"" if that isn't possible.
+
+        Never raises and never returns the input unchanged: every caller is about
+        to label the result ``image/png``."""
+        try:
+            from AppKit import NSBitmapImageRep, NSData
+            try:
+                from AppKit import NSBitmapImageFileTypePNG as png_type
+            except ImportError:                 # PyObjC < 8 spelled it differently
+                from AppKit import NSPNGFileType as png_type
+        except Exception:
+            return b""
+        try:
+            nsdata = NSData.dataWithBytes_length_(data, len(data))
+            rep = NSBitmapImageRep.imageRepWithData_(nsdata)
+            if rep is None:
+                return b""
+            out = rep.representationUsingType_properties_(png_type, {})
+            return bytes(out) if out else b""
+        except Exception:
+            return b""
 
     # -- write -----------------------------------------------------------
     def copy_text(self, text: str) -> None:
