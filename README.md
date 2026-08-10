@@ -27,16 +27,13 @@ the dock. And because the same history engine runs on both platforms, an
 **end-to-end-encrypted LAN sync** keeps your clipboard with you as you move
 between machines — including between Linux and macOS.
 
-<table>
-<tr>
-<td width="50%"><img src="docs/screenshot-cosmic.png" alt="Clippy on Linux, showing the tile strip over a COSMIC desktop"></td>
-<td width="50%"><img src="docs/screenshot-macos.png" alt="Clippy on macOS, showing the tile strip with source-app icons"></td>
-</tr>
-<tr>
-<td align="center"><sub><b>Linux</b> · Wayland / COSMIC</sub></td>
-<td align="center"><sub><b>macOS</b> · menubar app</sub></td>
-</tr>
-</table>
+<img src="docs/screenshot-cosmic.jpg" alt="Clippy on Linux: the tile strip across the bottom of a COSMIC desktop, showing text, image, video and file clips with type badges, tab bar and shortcut hints">
+
+<sub>**Linux** — Wayland / COSMIC. Custom tabs, type badges, and the shortcut bar along the bottom.</sub>
+
+<img src="docs/screenshot-macos.png" alt="Clippy on macOS: the same tile strip over the desktop, showing clips synced from the Linux machine">
+
+<sub>**macOS** — the same panel, showing clips that synced over from the Linux machine above.</sub>
 
 ## Features
 
