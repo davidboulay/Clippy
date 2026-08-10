@@ -22,7 +22,7 @@ try:
         NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable,
         NSWindowStyleMaskTitled, NSBackingStoreBuffered, NSFont,
     )
-    from Foundation import NSObject
+    from Foundation import NSObject, NSTimer
     _HAVE_APPKIT = True
 except Exception:  # pragma: no cover
     _HAVE_APPKIT = False
@@ -309,6 +309,37 @@ class SettingsController(NSObject):
             pass
         self.window.makeKeyAndOrderFront_(None)
         self.window.orderFrontRegardless()
+        # The controller is created once and reused, so the peer list built at
+        # construction went stale — a device paired afterwards still showed "No
+        # paired devices yet" here even though the menubar knew. Refresh on every
+        # open, and tick while visible so a pairing that completes with this
+        # window open appears, and the reachability bulbs stay live.
+        self.refreshPeers()
+        self._startPeerTimer()
+
+    def _startPeerTimer(self):
+        if getattr(self, "_peer_timer", None) is not None:
+            return
+        try:
+            self._peer_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                2.0, self, b"tickPeers:", None, True)
+        except Exception:
+            self._peer_timer = None
+
+    def _stopPeerTimer(self):
+        t = getattr(self, "_peer_timer", None)
+        if t is not None:
+            try:
+                t.invalidate()
+            except Exception:
+                pass
+            self._peer_timer = None
+
+    def tickPeers_(self, _timer):
+        if not self.window.isVisible():
+            self._stopPeerTimer()
+            return
+        self.refreshPeers()
 
     def windowDidResignKey_(self, note):
         # Close when the user clicks AWAY from our app. An in-app NSAlert
@@ -318,6 +349,7 @@ class SettingsController(NSObject):
         try:
             if not NSApp().isActive():
                 self.window.orderOut_(None)
+                self._stopPeerTimer()
         except Exception:
             pass
 
@@ -329,32 +361,66 @@ class SettingsController(NSObject):
         self.pair_status.setStringValue_(text)
 
     def refreshPeers(self):
+        import time
         try:
-            peers = self.engine.status().get("peers", []) if self.engine else []
+            status = self.engine.status() if self.engine else {}
         except Exception:
-            peers = []
+            status = {}
+        peers = status.get("peers", [])
+        stale = status.get("stale", [])
         box = self.peers_box
         for v in list(box.subviews()):
             v.removeFromSuperview()
         bw = box.frame().size.width
         bh = box.frame().size.height
-        if not peers:
+        if not peers and not stale:
             box.addSubview_(_label("No paired devices yet.", 2, bh / 2 - 9,
                                    bw - 4, 18, size=11))
             return
         rowh, gap = 26.0, 2.0
-        for i, p in enumerate(peers[:2]):
+        rows = ([("peer", p) for p in peers] + [("stale", s) for s in stale])[:2]
+        lc = status.get("last_check")
+        for i, (kind, p) in enumerate(rows):
             ry = bh - (i + 1) * rowh - i * gap
-            dot = "● " if p["online"] else "○ "
-            lbl = _label(dot + p["name"], 2, ry + 3, bw - 96, 18, size=12)
+            # Coloured status bulb as its own label so only the dot is tinted:
+            # green = reachable now, grey = not, amber ⚠ = needs re-pair.
+            dot = _label("●" if kind == "peer" else "⚠", 2, ry + 3, 16, 18, size=12)
+            if kind == "stale":
+                dot.setTextColor_(NSColor.systemOrangeColor())
+            elif p.get("online"):
+                dot.setTextColor_(NSColor.systemGreenColor())
+            else:
+                dot.setTextColor_(NSColor.secondaryLabelColor())
+            box.addSubview_(dot)
+            if kind == "stale":
+                text = f"{p['name']} — re-pair required"
+            elif p.get("online"):
+                ago = int(time.time() - lc) if lc else None
+                text = p["name"] + (f"   ·  {ago}s ago" if ago is not None else "")
+            else:
+                text = p["name"] + "  ·  offline"
+            lbl = _label(text, 20, ry + 3, bw - 116, 18, size=12)
             lbl.sizeToFit()
             box.addSubview_(lbl)
-            # Unpair sits immediately after the device name (not pinned far right).
-            bx = min(2 + lbl.frame().size.width + 10, bw - 88)
-            btn = _button("Unpair", bx, ry, 84, 26, self, b"unpairClicked:")
+            btn_title = "Remove" if kind == "stale" else "Unpair"
+            bx = min(20 + lbl.frame().size.width + 10, bw - 88)
+            btn = _button(btn_title, bx, ry, 84, 26, self,
+                          b"removeStaleClicked:" if kind == "stale"
+                          else b"unpairClicked:")
             btn.setFont_(NSFont.systemFontOfSize_(11))
             btn.setIdentifier_(str(p["id"]))
             box.addSubview_(btn)
+
+    def removeStaleClicked_(self, sender):
+        if not self.engine:
+            return
+        pid = str(sender.identifier() or "")
+        if pid:
+            try:
+                self.engine.forget_stale(pid)
+            except Exception:
+                pass
+            self.refreshPeers()
 
     def unpairClicked_(self, sender):
         from AppKit import NSAlert, NSImage, NSMakeSize

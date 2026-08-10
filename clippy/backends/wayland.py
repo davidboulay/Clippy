@@ -352,7 +352,17 @@ class WaylandBackend:
         # plus a uri-list, so pasting in Files/Nautilus drops the actual file.
         # The persistent owner carries both at once and keeps serving them; the
         # fallback below can only put one on each channel.
-        if x11clip.publish_parts(self._file_parts(path)):
+        parts = self._file_parts(path)
+        # If the file IS an image, also offer its raw bytes. A screenshot tool
+        # (macOS CleanShot, some Linux ones) copies a file *reference* to the
+        # image, not image data, so it arrives here as a file — and pasting a
+        # file:// URI into a chat/editor (Claude Desktop, Slack) drops a link,
+        # not a picture. Offering image/png alongside the file lets image
+        # targets take the picture while file managers still take the file.
+        img = self._image_bytes_for(path)
+        if img is not None:
+            parts = [img] + parts
+        if x11clip.publish_parts(parts):
             # Track the file's *content* hash: that is what capture stores for a
             # file clip (storage.add_file_from_path), so it's the digest our own
             # echo arrives with. Without it the echo looked like someone else's
@@ -375,6 +385,25 @@ class WaylandBackend:
         # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
         # (editors, some chat apps) see it too.
         self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
+
+    @staticmethod
+    def _image_bytes_for(path: str):
+        """(mime, bytes) if ``path`` is an image we can offer inline, else None.
+
+        Uses the file's magic, not its extension, so a mislabelled name can't
+        make us claim a type the bytes aren't. Capped so a huge file isn't read
+        into memory for the inline flavor (the file reference still carries it)."""
+        import os
+        from ..capture import sniff_image_mime
+        try:
+            if os.path.getsize(path) > config.MAX_IMAGE_BYTES:
+                return None
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            return None
+        mime = sniff_image_mime(data)
+        return (mime, data) if mime else None
 
     def start_watch(self, on_change: Callable[[], None]) -> None:
         # No-op: the daemon spawns `wl-paste --watch ... _store`, which is the

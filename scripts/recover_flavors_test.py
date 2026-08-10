@@ -155,6 +155,21 @@ check("the file's CONTENT digest is recorded (what capture stores)",
       hashlib.sha256(b"file contents").hexdigest() in (rec.published or set()), True)
 tmp.unlink(missing_ok=True)
 
+print("image-file recover also offers the image inline")
+# A screenshot copied as a file reference (macOS CleanShot, synced over) must
+# still paste as a picture into image targets, not as a file:// link.
+rec = install()
+png = b"\x89PNG\r\n\x1a\n" + b"screenshot" * 100
+imgtmp = Path("/tmp/clippy-recover-flavors-shot.png")
+imgtmp.write_bytes(png)
+WaylandBackend().copy_file(str(imgtmp))
+mimes = [m for m, _ in (rec.parts or [])]
+check("image/png is offered alongside the file", "image/png" in mimes, True)
+check("the image flavor carries the real bytes",
+      dict(rec.parts)["image/png"], png)
+check("file flavors are still offered too", "text/uri-list" in mimes, True)
+imgtmp.unlink(missing_ok=True)
+
 x11clip.publish, x11clip.publish_parts, x11clip.note_published = ORIGINALS
 
 print()
