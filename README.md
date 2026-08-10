@@ -117,7 +117,7 @@ sudo apt install ./clippy_*.deb
 Dependencies (handled by the `.deb`): `wl-clipboard`, `python3-gi`,
 `gir1.2-gtk-3.0`, `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
 `gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
-plus `python3-nacl` + `python3-zeroconf` for sync (`poppler-utils` for PDF
+plus `python3-nacl` + `python3-zeroconf` + `python3-spake2` for sync (`poppler-utils` for PDF
 thumbnails — pulled in via Recommends; `ffmpeg` optional for video thumbnails;
 `xclip` optional — a fallback for reaching XWayland apps when the GTK 4 owner
 can't start).
@@ -203,10 +203,15 @@ Continuity already does it. Clippy's sync is for everyone else.
 - **Discovery:** automatic via mDNS (zeroconf); falls back to a manual IP if your
   network blocks multicast.
 - **Security:** each device has a long-term **X25519** identity key (stored
-  `0600`). **Pairing is confirmed with a 6-digit code**, so a man-in-the-middle
-  can't slip in a key. Every payload is encrypted + authenticated with **NaCl**.
-  Only paired devices are accepted, and traffic never leaves the LAN. Trust is
-  keyed to the stable identity key, so it survives a device's id changing.
+  `0600`). **Pairing runs SPAKE2** (a password-authenticated key exchange) keyed
+  by a 6-digit code — neither side transmits the code or anything an
+  eavesdropper could crack, and a wrong code cannot complete pairing, so a
+  man-in-the-middle can't slip in a key. Every payload is encrypted +
+  authenticated with **NaCl**. Only paired devices are accepted, and traffic
+  never leaves the LAN. Trust is keyed to the stable identity key, so it
+  survives a device's id changing.
+- **Device status:** a green/grey bulb per paired device shows real reachability
+  (an active check, with a "checked Ns ago" note), on both platforms.
 - **Size cap:** default **512 MiB**, raise up to **2 GiB** (enforced on both
   ends). Transfers over ~5 MiB show a progress bar on the sender.
 
@@ -219,7 +224,11 @@ Continuity already does it. Clippy's sync is for everyone else.
    `clippy pair <code> <ip>` if multicast is blocked).
 
 That's it — the macOS *Device sync* pane and `clippy peers` list paired devices,
-and either side can **unpair** later.
+and either side can **unpair** later (which clears the pairing on both).
+
+> **Updating from a pre-1.5.2 build?** The pairing protocol changed for the
+> SPAKE2 security fix, so existing pairings are disabled and shown as *"re-pair
+> required"* — re-pair once (both devices on 1.5.2) to resume syncing.
 
 ## How it's built
 
