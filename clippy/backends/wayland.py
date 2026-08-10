@@ -11,8 +11,20 @@ import shutil
 import subprocess
 from typing import Callable, List, Optional
 
-from .. import config, settings, x11clip
+from .. import config, debuglog, richtext, settings, x11clip
 from .base import ClipboardError
+
+
+def _note_published(*payloads: bytes) -> None:
+    """Tell the X11 owner which content it is now serving, by sha256 hex.
+
+    Every recover path has to do this, not just images. The digest is how
+    ``x11clip.release_unless_ours`` recognises our own publish coming back
+    through the compositor as a capture; a path that skips it either has its
+    fresh clip released by its own echo, or — when nothing is tracked at all —
+    keeps serving a clip long after another app has replaced it."""
+    import hashlib
+    x11clip.note_published(*(hashlib.sha256(p).hexdigest() for p in payloads if p))
 
 
 class WaylandBackend:
@@ -76,11 +88,23 @@ class WaylandBackend:
     def pick_html_type(self, types: List[str]) -> Optional[str]:
         return self._pick(types, config.HTML_TYPES)
 
+    # A clipboard read is served by the *source* app, so a hung or dying source
+    # hangs us. That matters more than it looks: wl-paste --watch runs its hooks
+    # strictly one after another, so seconds spent here are seconds during which
+    # later copies aren't captured at all. Local transfers finish in
+    # milliseconds; anything near this bound is a source that is never going to
+    # answer, and giving up early costs a clip rather than a run of them.
+    _READ_TIMEOUT = 6
+
     def read_bytes(self, mime: str) -> bytes:
         try:
             return subprocess.run(
-                ["wl-paste", "-t", mime], capture_output=True, timeout=15,
+                ["wl-paste", "-t", mime], capture_output=True,
+                timeout=self._READ_TIMEOUT,
             ).stdout
+        except subprocess.TimeoutExpired:
+            debuglog.log("read.timeout", mime=mime)
+            return b""
         except (subprocess.SubprocessError, OSError):
             return b""
 
@@ -89,36 +113,59 @@ class WaylandBackend:
         if mime:
             cmd += ["-t", mime]
         try:
-            raw = subprocess.run(cmd, capture_output=True, timeout=15).stdout
+            raw = subprocess.run(cmd, capture_output=True,
+                                 timeout=self._READ_TIMEOUT).stdout
+        except subprocess.TimeoutExpired:
+            debuglog.log("read.timeout", mime=mime or "<default>")
+            return ""
         except (subprocess.SubprocessError, OSError):
             return ""
         return raw.decode("utf-8", "replace")
 
     def copy_text(self, text: str) -> None:
-        data = text.encode("utf-8")
-        subprocess.run(["wl-copy"], input=data, timeout=10)
         # wl-copy only sets the wlr-data-control selection. cosmic-comp bridges
         # the *regular* wl_data_device selection into data-control (so wl-paste
         # sees app copies) but NOT reliably the other way — a data-control
         # selection is invisible to GUI apps that read the regular selection
         # (Chromium/Brave, GTK, every XWayland app), so a recovered clip would
         # sit unpasteable there. Hand it to the persistent X11 owner, which
-        # serves XWayland apps directly and keeps Xwayland alive; fall back to a
-        # one-shot xclip mirror when that owner isn't available.
-        if not x11clip.publish(data):
-            self.mirror_to_x11(None, data)
+        # serves XWayland apps directly (and, via Xwayland re-exposing the X11
+        # selection as the regular one, native-Wayland apps too) and keeps
+        # Xwayland alive; fall back to wl-copy plus a one-shot xclip mirror only
+        # when that owner isn't available.
+        data = text.encode("utf-8")
+        if x11clip.publish(data):
+            _note_published(data)
+            return
+        subprocess.run(["wl-copy"], input=data, timeout=10)
+        self._x11_mirror(None, data)
 
     def copy_html(self, html: str, text: Optional[str] = None) -> None:
-        # ``text`` (the plain flavor) can't be offered alongside html here:
-        # wl-copy serves a single MIME type per invocation, and a second
-        # wl-copy would steal the selection and drop the html.
+        # A rich clip has to be offered *both* ways at once. Serving text/html
+        # alone is what made ordinary copied text unpasteable in some apps until
+        # the user picked "Copy as plain text": a consumer that asks only for
+        # plain targets (UTF8_STRING/STRING/text/plain) finds nothing to
+        # convert, and gets nothing. wl-copy and xclip each carry a single type
+        # per invocation and so cannot express this; the persistent owner's
+        # union provider can, and GDK's X11 backend expands
+        # text/plain;charset=utf-8 into the classic targets for us.
         data = html.encode("utf-8")
+        plain = (text if text is not None else richtext.html_to_text(html))
+        plain_data = (plain or "").encode("utf-8")
+        parts: List[tuple] = [("text/html", data)]
+        if plain_data:
+            parts += [(m, plain_data) for m in x11clip.TEXT_MIMES]
+        if x11clip.publish_parts(parts):
+            # Track the plain flavor: a rich clip is re-captured (and stored) as
+            # its plain text, so that — not the html — is the digest the echo
+            # arrives with. Passing both keeps us honest if that ever changes.
+            _note_published(plain_data, data)
+            return
+        # No persistent owner: fall back to one flavor per channel. Plain text
+        # reaches far more apps than html does, so when only one can be served,
+        # serve the one that pastes.
         subprocess.run(["wl-copy", "--type", "text/html"], input=data, timeout=10)
-        # Mirror to X11 as well (see copy_text): a data-control text/html
-        # selection never reaches GUI apps otherwise. They derive plain text
-        # from text/html when no plain target is offered, so rich paste still
-        # lands as at least plain text everywhere.
-        self.mirror_to_x11("text/html", data)
+        self._x11_mirror(None, plain_data or data)
 
     def copy_image(self, data: bytes, mime: str) -> None:
         # An image has to be offered two ways *at the same time*: raw bytes, so
@@ -136,22 +183,40 @@ class WaylandBackend:
                   if settings.get("image_file_flavors") else None)
         if staged:
             parts += self._file_parts(staged)
-        if x11clip.publish_parts(parts):
-            # Remember what we put there: the next clipboard change is our own
-            # publish coming back as a capture, and it must not be mistaken for
-            # someone else's copy (which releases the selection).
-            import hashlib
-            x11clip.note_published(hashlib.sha256(data).hexdigest())
-            # The owner holds the X11 selection and Xwayland re-exposes it as the
-            # regular Wayland selection, so native-Wayland *and* XWayland apps
-            # both see it. Adding a wl-copy here would be worse than useless: it
-            # only sets data-control, and loses the selection (and exits) within
-            # seconds once the owner's X11 grab bounces back through cosmic-comp.
-            return
-        # No persistent owner (no X display, or GTK 4 unavailable): fall back to
-        # one flavor per channel — bytes only, so file-drop targets stay broken.
-        subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
-        self._x11_mirror(mime, data)
+        published = x11clip.publish_parts(parts)
+        if published:
+            # Remember what we put there before touching the clipboard again:
+            # the next change is our own publish coming back as a capture, and
+            # it must not be mistaken for someone else's copy (which releases
+            # the selection).
+            _note_published(data)
+        # Set the Wayland selection ourselves as well, and set it LAST.
+        #
+        # This used to be skipped, on the reasoning that the X11 owner is
+        # re-exposed as the regular Wayland selection anyway. It is — but not
+        # intact. Measured on cosmic-comp: an image published through the X11
+        # owner reads back on X11 byte-exact, while the *same* clip read from
+        # the Wayland side comes back four bytes longer, with its own length
+        # glued on the front as a little-endian uint32 (a 281589-byte PNG
+        # arrives as 281593 bytes starting f5 4b 04 00). That is a chunked
+        # transfer's size header leaking into the payload, and it only shows up
+        # on large clips — a 17 KB image crossed the same bridge unharmed.
+        #
+        # Those mangled bytes are not a PNG, so every native-Wayland consumer
+        # pastes nothing. That now includes the app this mattered for:
+        # Claude Desktop runs --ozone-platform=wayland. Writing the selection
+        # ourselves means Wayland readers get our bytes from us instead of the
+        # compositor's re-encoding of them, and going last means our source
+        # replaces the proxy rather than the other way round.
+        try:
+            subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
+        except (subprocess.SubprocessError, OSError) as exc:
+            debuglog.log("copy_image.wl_copy_failed", error=exc)
+        if not published:
+            # No persistent owner (no X display, or GTK 4 unavailable): the
+            # one-shot mirror is all XWayland apps will get, and it carries a
+            # single flavor, so file-drop targets stay broken.
+            self._x11_mirror(mime, data)
 
     @staticmethod
     def _stage_image(data: bytes, mime: str) -> Optional[str]:
@@ -219,7 +284,11 @@ class WaylandBackend:
         if mime is not None:
             cmd += ["-t", mime]
         try:
-            cur = subprocess.run(cmd, capture_output=True, timeout=10)
+            # Short on purpose: this runs on the GTK main thread during a
+            # recover, and against a selection whose owner has gone unresponsive
+            # it is the whole freeze. It is only an optimisation — a wrong
+            # answer costs one redundant mirror, a slow answer costs the UI.
+            cur = subprocess.run(cmd, capture_output=True, timeout=2)
         except (subprocess.SubprocessError, OSError):
             return False
         return cur.returncode == 0 and cur.stdout == data
@@ -274,6 +343,19 @@ class WaylandBackend:
         # The persistent owner carries both at once and keeps serving them; the
         # fallback below can only put one on each channel.
         if x11clip.publish_parts(self._file_parts(path)):
+            # Track the file's *content* hash: that is what capture stores for a
+            # file clip (storage.add_file_from_path), so it's the digest our own
+            # echo arrives with. Without it the echo looked like someone else's
+            # copy and released the selection we had just taken.
+            try:
+                import hashlib
+                h = hashlib.sha256()
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                        h.update(chunk)
+                x11clip.note_published(h.hexdigest())
+            except OSError:
+                pass
             return
         import urllib.request
         uri = urllib.request.pathname2url(path)

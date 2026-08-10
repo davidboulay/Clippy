@@ -4,6 +4,7 @@
   toggle|show|hide  control the panel of a running daemon
   settings          open the settings window
   status            report whether the daemon is up and history size
+  types             show what the clipboard is offering right now (diagnostic)
   clear [--all]     wipe history (``--all`` includes pinned items)
   _store            internal: invoked by ``wl-paste --watch`` on each change
   setup-shortcut    print how to bind a global shortcut
@@ -80,10 +81,30 @@ def _cmd_store() -> int:
         # selection in step: mirror an image there (Xwayland never exports image
         # selections, so XWayland apps otherwise can't paste it) and hand the
         # selection back for anything else.
-        ipc.send(f"_current {entry_id}")
+        #
+        # _current is the one that matters for correctness — a dropped one
+        # leaves the X11 owner serving a clip the user has already replaced —
+        # and the daemon's IPC server is single-threaded, so a long-running
+        # query (pairing waits up to two minutes) can make the first attempt
+        # time out. Retry it once; the others are cosmetic and can be missed.
+        from . import debuglog
+        if not _send_current(entry_id):
+            debuglog.log("store.current_undelivered", id=entry_id)
         ipc.send("refresh")
         ipc.send(f"_broadcast {entry_id}")   # broadcast exactly this item
     return 0
+
+
+def _send_current(entry_id: int) -> bool:
+    import time
+    from . import ipc
+    for attempt in (1, 2):
+        reply = ipc.send(f"_current {entry_id}")
+        if reply is not None and not reply.startswith("err"):
+            return True
+        if attempt == 1:
+            time.sleep(0.5)
+    return False
 
 
 def _cmd_pair(code: str, host: str = "") -> int:
@@ -133,6 +154,93 @@ def _cmd_peers() -> int:
     return 0
 
 
+def _cmd_types() -> int:
+    """Dump what the clipboard is offering right now, on both channels.
+
+    The question behind most clipboard bugs is "what did that app actually put
+    there?", and answering it otherwise means a debugger or a guess. Read-only:
+    it never sets or clears a selection."""
+    import os
+    import subprocess
+
+    from . import capture, clipboard
+
+    types = clipboard.list_types()
+    if not types:
+        print("Wayland selection: (empty)")
+    else:
+        print("Wayland selection offers:")
+        for t in types:
+            print(f"  {t}")
+        print()
+        img = clipboard.pick_image_type(types)
+        txt = clipboard.pick_text_type(types)
+        html = clipboard.pick_html_type(types)
+        files = clipboard.read_file_paths(types)
+        print(f"picked image: {img or '-'}")
+        print(f"picked text:  {txt or '-'}")
+        print(f"picked html:  {html or '-'}")
+        print(f"file paths:   {', '.join(files) if files else '-'}")
+        if img:
+            preview = clipboard.read_bytes(img)
+            sniffed = capture.sniff_image_mime(preview) if preview else None
+            print(f"image bytes:  {len(preview)} (looks like {sniffed or 'unknown'})")
+            if not files:
+                verdict = ("text (a render of richer content)"
+                           if capture._image_is_a_preview(types) else "image")
+                print(f"would capture as: {verdict}")
+        elif txt:
+            body = clipboard.read_text(txt if "/" in txt else None)
+            print(f"text ({len(body)} chars): {body[:200]!r}")
+
+    # The X11 side is what XWayland apps (Electron, Claude Desktop) actually
+    # read, and it can be dead while the Wayland side looks perfectly healthy.
+    print()
+    if not os.environ.get("DISPLAY"):
+        print("X11: no DISPLAY")
+        return 0
+    owner = _x11_owner()
+    print(f"X11 CLIPBOARD owner: {owner or 'unknown'}")
+    try:
+        out = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-o", "-t", "TARGETS"],
+            capture_output=True, text=True, timeout=3,
+        )
+        targets = out.stdout.strip()
+        print("X11 selection targets:" if targets else "X11 selection: (none served)")
+        for line in targets.splitlines():
+            print(f"  {line.strip()}")
+    except (subprocess.SubprocessError, OSError):
+        print("X11: xclip unavailable")
+    # Read this section carefully, because it lies by omission. cosmic-comp
+    # exports a Wayland selection to X11 only while an X11 window holds
+    # keyboard focus, and gates reads of a proxied selection the same way — so
+    # an owner of 0x0 and "none served" is the *normal* state whenever the
+    # focused app is a Wayland one, which includes the terminal this just ran
+    # in. It means "not exported yet", not "broken". The way to see the real
+    # X11 state is to read it from a focused X11 window.
+    print("  (note: X11 export happens on focus into an X11 window — an empty\n"
+          "   result here is expected while a Wayland app has focus)")
+    return 0
+
+
+def _x11_owner():
+    """The X11 CLIPBOARD owner window id, via libX11 — ``xdotool`` can't query
+    selection owners and ``xlsclients`` only sees clients that own a window."""
+    import ctypes
+    import ctypes.util
+    try:
+        lib = ctypes.CDLL(ctypes.util.find_library("X11"))
+        lib.XOpenDisplay.restype = ctypes.c_void_p
+        display = lib.XOpenDisplay(None)
+        if not display:
+            return None
+        atom = lib.XInternAtom(ctypes.c_void_p(display), b"CLIPBOARD", 0)
+        return hex(lib.XGetSelectionOwner(ctypes.c_void_p(display), atom))
+    except Exception:
+        return None
+
+
 def _cmd_status() -> int:
     from . import ipc, storage
 
@@ -167,6 +275,7 @@ def main(argv=None) -> int:
     sub.add_parser("settings", help="open the settings window")
     sub.add_parser("quit", help="stop the running daemon")
     sub.add_parser("status", help="report daemon and history status")
+    sub.add_parser("types", help="show what the clipboard is offering right now")
     sub.add_parser("_store")  # internal: wl-paste --watch hook
     sub.add_parser("_x11clip")  # internal: persistent X11 (XWayland) clipboard owner
     sub.add_parser("setup-shortcut", help="how to bind a global shortcut")
@@ -198,6 +307,8 @@ def main(argv=None) -> int:
         return run()
     if args.command == "status":
         return _cmd_status()
+    if args.command == "types":
+        return _cmd_types()
     if args.command == "pair":
         return _cmd_pair(args.code, args.host)
     if args.command == "peers":

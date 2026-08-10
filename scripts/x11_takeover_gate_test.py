@@ -47,12 +47,15 @@ def run_capture(*, takeover, published=None):
     blob = pathlib.Path(tempfile.mkdtemp()) / "img.png"
     blob.write_bytes(b"\x89PNG\r\n\x1a\n" + b"z" * 16)
 
-    real = (storage.get, clipboard.copy_image, x11clip.published_digest,
+    real = (storage.get, clipboard.copy_image, x11clip.is_published,
             x11clip.release_unless_ours, settings.get)
     try:
         storage.get = lambda _id: Entry(blob)
         clipboard.copy_image = lambda data, mime: calls["copy_image"].append(mime)
-        x11clip.published_digest = lambda: published
+        # The owner tracks a *set* of digests for one clip (a rich recover is
+        # published as html plus plain text but re-captured as the plain flavor
+        # alone), so ownership is asked as a question rather than compared.
+        x11clip.is_published = lambda d: d is not None and d == published
         x11clip.release_unless_ours = lambda d: calls["released"].append(d)
         _real_get = real[4]
         settings.get = (lambda k: takeover if k == "x11_image_takeover"
@@ -60,7 +63,7 @@ def run_capture(*, takeover, published=None):
         daemon._MIRROR_TIMES[:] = []          # fresh rate-cap window
         daemon._current_clipboard("1")
     finally:
-        (storage.get, clipboard.copy_image, x11clip.published_digest,
+        (storage.get, clipboard.copy_image, x11clip.is_published,
          x11clip.release_unless_ours, settings.get) = real
     return calls
 

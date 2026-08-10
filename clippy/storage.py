@@ -117,14 +117,26 @@ def add_text(text: str, mime: str = "text/plain", html: Optional[str] = None) ->
         return row["id"] if row else None
 
 
+_IMAGE_EXTS = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp",
+    "image/gif": "gif", "image/bmp": "bmp", "image/tiff": "tiff",
+    "image/avif": "avif", "image/heif": "heic", "image/heic": "heic",
+    "image/svg+xml": "svg", "image/x-icon": "ico",
+}
+
+
 def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
     """Store an image entry. The bytes are written to a file in IMAGE_DIR."""
-    if not data or len(data) > config.SYNC_MAX_CEILING:
+    if not data:
+        return None
+    if len(data) > config.MAX_IMAGE_BYTES:
+        from . import debuglog
+        debuglog.log("storage.image_too_big", bytes=len(data),
+                     cap=config.MAX_IMAGE_BYTES)
         return None
     digest = hashlib.sha256(data).hexdigest()
     now = time.time()
-    ext = {"image/jpeg": "jpg", "image/jpg": "jpg", "image/bmp": "bmp",
-           "image/tiff": "tiff"}.get(mime.lower(), "png")
+    ext = _IMAGE_EXTS.get((mime or "").split(";")[0].strip().lower(), "png")
     path = config.IMAGE_DIR / f"{digest}.{ext}"
     with _connect() as conn:
         existing = conn.execute(
@@ -137,13 +149,35 @@ def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
             return existing["id"]
         if not path.exists():
             path.write_bytes(data)
-        cur = conn.execute(
+        row_id = _insert_or_bump(
+            conn,
             """INSERT INTO entries (kind, mime, image_path, hash, size, created_at)
                VALUES ('image', ?, ?, ?, ?, ?)""",
             (mime, str(path), digest, len(data), now),
+            digest, now,
         )
         _prune_count(conn)
+        return row_id
+
+
+def _insert_or_bump(conn: sqlite3.Connection, sql: str, params: tuple,
+                    digest: str, now: float) -> Optional[int]:
+    """Run an INSERT that may collide on the UNIQUE content hash, and return the
+    row's id either way.
+
+    The check-then-insert above is not atomic across processes, and two of them
+    genuinely race: the daemon snapshots the clipboard at startup while the
+    ``wl-paste --watch`` hook it just spawned fires for the same selection. The
+    loser used to raise IntegrityError out of capture, so that copy was lost.
+    Treat a collision as what it is — the same content, already stored — and
+    bump it to the front like any re-copy."""
+    try:
+        cur = conn.execute(sql, params)
         return cur.lastrowid
+    except sqlite3.IntegrityError:
+        conn.execute("UPDATE entries SET created_at=? WHERE hash=?", (now, digest))
+        row = conn.execute("SELECT id FROM entries WHERE hash=?", (digest,)).fetchone()
+        return row["id"] if row else None
 
 
 def _blob_ext(name: str, mime: str) -> str:
@@ -178,13 +212,15 @@ def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> 
             return existing["id"]
         if not path.exists():
             path.write_bytes(data)
-        cur = conn.execute(
+        row_id = _insert_or_bump(
+            conn,
             """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
                VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
             (name, mime, str(path), name, digest, len(data), now),
+            digest, now,
         )
         _prune_count(conn)
-        return cur.lastrowid
+        return row_id
 
 
 def add_file_from_path(src: str, name: str,
@@ -215,13 +251,15 @@ def add_file_from_path(src: str, name: str,
             return existing["id"]
         if not path.exists():
             shutil.copyfile(src, path)
-        cur = conn.execute(
+        row_id = _insert_or_bump(
+            conn,
             """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
                VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
             (name, mime, str(path), name, digest, size, now),
+            digest, now,
         )
         _prune_count(conn)
-        return cur.lastrowid
+        return row_id
 
 
 def list_entries(query: str = "", limit: int = config.MAX_HISTORY,

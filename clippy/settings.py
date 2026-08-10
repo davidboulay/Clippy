@@ -38,6 +38,11 @@ DEFAULTS: Dict[str, Any] = {
     # failed at capture time and all three work on recover. Kept as the record of
     # the attempt; turning it on reproduces the failure rather than fixing it.
     "x11_image_takeover": False,
+    # Append every capture/publish/release to <DATA_DIR>/debug.log. Off by
+    # default; clipboard problems are timing-dependent and reproducing one is
+    # much easier with a trace than with a description. CLIPPY_DEBUG=1 in the
+    # environment turns it on without touching this file.
+    "debug_log": False,
     "retention": "1m",
     # "system" follows COSMIC's light/dark; or force "dark" / "light".
     "theme_mode": "system",

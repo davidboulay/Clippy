@@ -14,7 +14,8 @@ import sys
 import threading
 from typing import Optional
 
-from . import clipboard, config, ipc, settings, setup, sound, theme, x11clip
+from . import (clipboard, config, debuglog, ipc, notify, settings, setup, sound,
+               theme, x11clip)
 from .capture import capture_current
 
 _RETENTION_INTERVAL_SECONDS = 1800  # re-check every 30 min
@@ -49,6 +50,56 @@ def _start_watcher() -> Optional[subprocess.Popen]:
     except OSError as exc:
         print(f"clippy: failed to start clipboard watcher: {exc}", file=sys.stderr)
         return None
+
+
+_WATCHER_CHECK_SECONDS = 10
+_WATCHER_MIN_RESPAWN = 5     # don't relaunch faster than this after a death
+
+
+class _WatcherKeeper:
+    """Keeps ``wl-paste --watch`` alive for the life of the daemon.
+
+    Capture on Linux happens entirely inside that subprocess, so if it exits —
+    a compositor restart, an OOM kill, wl-clipboard crashing on a malformed
+    offer — Clippy stops recording the clipboard and says nothing. Everything
+    still *looks* fine: the panel opens, history is there, the tray is up. The
+    only symptom is that nothing new ever appears again until the daemon is
+    restarted, which reads as "Clippy randomly stopped working".
+
+    Relaunching is safe and self-healing: wl-paste fires its hook once at
+    startup for whatever is already on the clipboard, so a respawn re-captures
+    the current clip rather than starting blind."""
+
+    def __init__(self) -> None:
+        self.proc = _start_watcher()
+        self._last_spawn = __import__("time").time()
+
+    def check(self) -> bool:
+        import time
+        if self.proc is not None and self.proc.poll() is None:
+            return True
+        code = self.proc.returncode if self.proc is not None else None
+        if self.proc is not None:
+            debuglog.log("watcher.died", code=code)
+            print(f"clippy: clipboard watcher exited ({code}); restarting.",
+                  file=sys.stderr)
+        # Back off rather than spin: without a compositor to talk to, wl-paste
+        # exits immediately and a tight respawn loop would burn a core.
+        if time.time() - self._last_spawn < _WATCHER_MIN_RESPAWN:
+            return True
+        self.proc = _start_watcher()
+        self._last_spawn = time.time()
+        debuglog.log("watcher.respawn", ok=self.proc is not None)
+        return True
+
+    def stop(self) -> None:
+        if self.proc is None:
+            return
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
 
 
 class AppController:
@@ -102,6 +153,7 @@ class AppController:
         self._settings_window.show()
 
     def settings_changed(self) -> None:
+        debuglog.refresh()   # a toggled debug_log takes effect without a restart
         self.refresh_theme()
         self._sync_autostart()
         if self.panel._visible:
@@ -284,7 +336,7 @@ def _current_clipboard(entry_id: str) -> None:
     # The working answer is the panel recover: click the tile, then paste.
     _MIRROR_ON_CAPTURE = bool(settings.get("x11_image_takeover"))
 
-    if entry is not None and digest == x11clip.published_digest():
+    if entry is not None and x11clip.is_published(digest):
         return                      # already the live X11 selection — our own echo
     if _MIRROR_ON_CAPTURE and entry is not None and _mirror_allowed():
         try:
@@ -433,7 +485,10 @@ def run_daemon() -> int:
     )
     server.start()
 
-    watcher = _start_watcher()
+    # The clipboard watcher *is* capture on Linux; keep it alive (see
+    # _WatcherKeeper) rather than assume one spawn lasts the session.
+    watcher = _WatcherKeeper()
+    GLib.timeout_add_seconds(_WATCHER_CHECK_SECONDS, lambda: watcher.check())
 
     # Persistent X11 (XWayland) clipboard owner: serves recovered clips to X11
     # apps (Claude Desktop, etc.) directly and keeps Xwayland from cycling. Start
@@ -479,12 +534,7 @@ def run_daemon() -> int:
         x11clip.stop()
         if engine is not None:
             engine.stop()
-        if watcher is not None:
-            watcher.terminate()
-            try:
-                watcher.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                watcher.kill()
+        watcher.stop()
     return 0
 
 
@@ -498,16 +548,7 @@ def storage_apply_retention_safe() -> None:
 
 def _simple_note(body: str) -> None:
     """Fire-and-forget desktop note for update progress (best-effort)."""
-    if shutil.which("notify-send") is None:
-        return
-    try:
-        subprocess.Popen(
-            ["notify-send", "--app-name", "Clippy", body],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError:
-        pass
+    notify.send(body)
 
 
 def _do_update(controller, result) -> None:

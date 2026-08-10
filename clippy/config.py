@@ -69,7 +69,11 @@ MAX_HISTORY = 1000
 DISPLAY_LIMIT = 60
 
 # Largest image (bytes) we will store. Bigger payloads are skipped.
-MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MiB
+# An image clip is read into memory whole (there's no streaming read for
+# clipboard bytes), so this is really a memory guard rather than a policy: set
+# high enough that real copies — multi-megapixel screenshots, layered exports —
+# still land in history, low enough that a runaway offer can't exhaust RAM.
+MAX_IMAGE_BYTES = 256 * 1024 * 1024  # 256 MiB
 
 # Panel geometry (logical pixels).
 PANEL_HEIGHT = 320
@@ -79,8 +83,12 @@ TILE_HEIGHT = 250
 # clipped so every tile is exactly the same height.
 TILE_CONTENT_HEIGHT = TILE_HEIGHT - 78  # ~172px
 
-# Preferred clipboard MIME types, in priority order.
-IMAGE_TYPES = ("image/png", "image/jpeg", "image/jpg", "image/bmp", "image/tiff")
+# Preferred clipboard MIME types, in priority order. PNG leads because it is
+# lossless and universally understood by paste targets; the rest are listed so a
+# source that offers only one of them is matched exactly (an unlisted image/*
+# type still captures via the wildcard fallback in the backend's picker).
+IMAGE_TYPES = ("image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif",
+               "image/bmp", "image/tiff", "image/avif", "image/heif")
 TEXT_TYPES = (
     "text/plain;charset=utf-8",
     "text/plain",

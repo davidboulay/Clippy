@@ -1022,14 +1022,46 @@ class Panel:
 
         mode: 'auto' (respect the always-plain-text setting), 'plain', 'rich'.
         """
+        if not self._restore_to_clipboard(entry, mode):
+            # A recover that fails has to say so. Swallowing it meant the panel
+            # closed, the tile jumped to the front as if it had worked, and the
+            # next paste quietly produced whatever was on the clipboard before —
+            # indistinguishable from Clippy having done nothing at all.
+            from . import notify
+            notify.send("Couldn't put that back on the clipboard.", "Clippy")
+            return
+        # Recover-to-front: a recovered clip jumps back to position 1 so it's
+        # where you'd expect it next time the panel opens.
+        try:
+            storage.touch(entry.id)
+        except OSError:
+            pass
+        self.hide()
+
+    def _restore_to_clipboard(self, entry: Entry, mode: str) -> bool:
+        """Put ``entry`` back on the clipboard. False if it couldn't be done.
+
+        Each step is guarded separately: reading a blob that has gone missing is
+        a different failure from the clipboard write, and only the former means
+        the history row is now a dead reference."""
+        from . import debuglog
         try:
             if entry.is_file and entry.image_path:
                 # Stage a copy under the original filename so the pasted file
                 # isn't named after its content hash (the blob's name).
-                clipboard.copy_file(storage.paste_path(entry) or entry.image_path)
+                path = storage.paste_path(entry) or entry.image_path
+                if not Path(path).exists():
+                    debuglog.log("recover.blob_missing", id=entry.id, path=path)
+                    return False
+                clipboard.copy_file(path)
             elif entry.is_image and entry.image_path:
-                clipboard.copy_image(Path(entry.image_path).read_bytes(),
-                                     entry.mime or "image/png")
+                try:
+                    data = Path(entry.image_path).read_bytes()
+                except OSError:
+                    debuglog.log("recover.blob_missing", id=entry.id,
+                                 path=entry.image_path)
+                    return False
+                clipboard.copy_image(data, entry.mime or "image/png")
             else:
                 always_plain = bool(settings.get("always_plain_text"))
                 use_rich = (
@@ -1041,15 +1073,11 @@ class Panel:
                     clipboard.copy_html(entry.html, entry.text)
                 else:
                     clipboard.copy_text(entry.text or "")
-        except OSError:
-            pass
-        # Recover-to-front: a recovered clip jumps back to position 1 so it's
-        # where you'd expect it next time the panel opens.
-        try:
-            storage.touch(entry.id)
-        except OSError:
-            pass
-        self.hide()
+        except OSError as exc:
+            debuglog.log("recover.failed", id=entry.id, error=exc)
+            return False
+        debuglog.log("recover.ok", id=entry.id, kind=entry.kind, mode=mode)
+        return True
 
     def show_context_menu(self, entry: Entry, _event=None) -> None:
         """Populate and reveal the inline action bar for an entry."""
