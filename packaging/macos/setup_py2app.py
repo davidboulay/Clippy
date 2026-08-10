@@ -20,9 +20,16 @@ OPTIONS = {
     # Recursively bundle these packages (incl. their compiled .so files):
     #  - nacl + cffi: PyNaCl reaches libsodium through cffi/_cffi_backend
     #  - zeroconf + ifaddr (+ async_timeout): mDNS discovery
+    #  - spake2: the SPAKE2 pairing handshake. MUST be named, or sync_available()
+    #    is False on the built app and the Sync UI shows "No module named
+    #    'spake2'" — py2app only bundles what it can statically trace, and the
+    #    sync.py import is guarded (try/except), so py2app treats it as optional
+    #    and drops it unless named here. spake2 imports hkdf, which is a single
+    #    .py module (not a package), so it belongs in `includes` below, not here.
     "packages": ["clippy", "nacl", "cffi", "zeroconf", "ifaddr", "rumps", "Quartz",
-                 "QuickLookThumbnailing"],
-    "includes": ["_cffi_backend", "async_timeout", "AppKit", "Foundation", "objc"],
+                 "QuickLookThumbnailing", "spake2"],
+    "includes": ["_cffi_backend", "async_timeout", "AppKit", "Foundation", "objc",
+                 "hkdf"],
     # Copy the menubar template icons into Contents/Resources (packages alone
     # doesn't reliably bundle package data files).
     "resources": [
