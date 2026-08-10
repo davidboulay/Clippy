@@ -98,6 +98,28 @@ check("document paragraph + render -> text wins",
 check("multi-line text starting with a URL -> text wins",
       preview_verdict(ALL, "<p>see</p>", "https://a.example\nand more"), True)
 
+# --- image-wrapper detection, and its old ReDoS ----------------------------
+print("single-image detection")
+check("browser Copy Image markup", richtext.is_single_image(IMG_HTML), True)
+check("bare img with no header", richtext.is_single_image("<img src=x>"), True)
+check("img plus text is not just an image",
+      richtext.is_single_image("<img src=x> caption"), False)
+check("img inside a table is not just an image",
+      richtext.is_single_image("<table><tr><td><img src=x></td></tr></table>"), False)
+check("a table is not an image", richtext.is_single_image(SHEET_HTML), False)
+check("empty is not an image", richtext.is_single_image(""), False)
+
+# The regex this replaced backtracked exponentially on this shape, and the input
+# is html from whatever app the user copied from — so a malformed payload could
+# hang capture. Linear parsing must stay linear.
+import time                                                  # noqa: E402
+hostile = "<!--" + "--><!--" * 4000
+t0 = time.time()
+richtext.is_single_image(hostile)
+elapsed = time.time() - t0
+check(f"pathological input stays fast ({elapsed:.3f}s for {len(hostile)} chars)",
+      elapsed < 1.0, True)
+
 # --- html -> plain text ----------------------------------------------------
 print("html to plain text")
 check("table becomes tab/newline separated",

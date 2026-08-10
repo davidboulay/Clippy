@@ -26,6 +26,51 @@ _CELL = {"td", "th"}
 _SKIP = {"script", "style", "title"}
 
 
+def is_single_image(html: str) -> bool:
+    """True when the fragment's only content is one ``<img>`` and nothing else.
+
+    That is what a browser puts on the clipboard for "Copy image": the picture
+    really is the clip, so an image offered alongside it should win over the
+    markup. A spreadsheet or document selection, by contrast, carries a table or
+    real text, and there the markup is the content.
+
+    Parsed rather than pattern-matched on purpose. The regex this replaced had
+    nested quantifiers over an alternation, which backtracks exponentially on
+    input like ``<!--`` followed by many ``--><!--`` repetitions — and the input
+    here is html handed over by whatever app the user copied from, so a
+    malformed or hostile payload could hang capture. Parsing is linear, and it
+    is more accurate besides."""
+    from html.parser import HTMLParser
+
+    # Wrappers and metadata that carry no visible content — apps routinely
+    # prepend a <meta charset> header, and some wrap the fragment in html/body.
+    ignore = {"html", "head", "body", "meta", "title", "!doctype"}
+
+    class _Scan(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.elements: List[str] = []
+            self.has_text = False
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in ignore:
+                self.elements.append(tag)
+
+        handle_startendtag = handle_starttag
+
+        def handle_data(self, data):
+            if data.strip():
+                self.has_text = True
+
+    scan = _Scan()
+    try:
+        scan.feed(html)
+        scan.close()
+    except Exception:
+        return False
+    return scan.elements == ["img"] and not scan.has_text
+
+
 def html_to_text(html: str) -> str:
     """A readable plain-text rendering of `html` ('' if it can't be parsed)."""
     from html import unescape

@@ -64,33 +64,50 @@ check("a burst for one entry plays at most once", sum(results) <= 1, True)
 
 print("database failures reach callers as OSError")
 storage.add_text("seed entry")
-check("storage works before corruption", storage.count() >= 1, True)
-with open(storage.config.DB_PATH, "r+b") as fh:
-    fh.write(b"this is definitely not a sqlite database")
-for suffix in ("-wal", "-shm"):
-    stray = Path(str(storage.config.DB_PATH) + suffix)
-    if stray.exists():
-        stray.unlink()
-
-raised = None
-try:
-    storage.list_entries()
-except OSError:
-    raised = "OSError"
-except Exception as exc:                                    # noqa: BLE001
-    raised = type(exc).__name__
-check("list_entries raises OSError, not a bare sqlite3.Error", raised, "OSError")
+check("storage works normally first", storage.count() >= 1, True)
 check("StorageError is an OSError", issubclass(storage.StorageError, OSError), True)
 
-caught = False
+# Injected rather than provoked by corrupting the database file. Overwriting a
+# SQLite header looks like the more honest test, but it is not a stable fixture:
+# whether — and at which statement — SQLite rejects the file depends on its
+# version, on WAL checkpoint timing, and on what survived the overwrite. Two CI
+# runs of identical code disagreed about it, and each disagreed with this
+# machine. A flaky assertion is worse than none, because it teaches you to
+# ignore the signal.
+#
+# What the code under test actually does is translate sqlite3.Error into an
+# OSError subclass at the storage boundary, so that is what gets asserted, at
+# every entry point a caller wraps in `except OSError`.
+import sqlite3 as _sqlite3                                  # noqa: E402
+
+
+def _raising_connect(*_a, **_kw):
+    raise _sqlite3.OperationalError("database is locked")
+
+
+_real_connect = storage._connect
+storage._connect = _raising_connect
 try:
-    try:
-        storage.get(1)
-    except OSError:
-        caught = True
-except Exception:                                           # noqa: BLE001
-    caught = False
-check("the guard callers already write now catches it", caught, True)
+    guarded = []
+    for name, call in (
+        ("get", lambda: storage.get(1)),
+        ("list_entries", lambda: storage.list_entries()),
+        ("count", lambda: storage.count()),
+        ("touch", lambda: storage.touch(1)),
+        ("add_text", lambda: storage.add_text("x")),
+        ("apply_retention", lambda: storage.apply_retention()),
+    ):
+        try:
+            call()
+            guarded.append(f"{name}:no-raise")
+        except OSError:
+            guarded.append(f"{name}:ok")       # the guard callers write catches it
+        except Exception as exc:               # noqa: BLE001
+            guarded.append(f"{name}:{type(exc).__name__}")
+    check("every entry point a caller guards raises OSError on a locked db",
+          [g for g in guarded if not g.endswith(":ok")], [])
+finally:
+    storage._connect = _real_connect
 
 print("IPC stays responsive while a slow command runs")
 started = threading.Event()

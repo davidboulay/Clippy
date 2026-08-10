@@ -5,10 +5,9 @@ and by the daemon's one-shot capture at startup. GTK-free on purpose.
 """
 from __future__ import annotations
 
-import re
 from typing import List, Optional
 
-from . import clipboard, config, debuglog, settings, sound, storage
+from . import clipboard, config, debuglog, richtext, settings, sound, storage
 
 # When Clippy mirrors an image/file copy to the X11 clipboard, XWayland
 # re-publishes it onto the Wayland clipboard, which fires wl-paste --watch a
@@ -122,17 +121,6 @@ def sniff_image_mime(data: bytes) -> Optional[str]:
     return None
 
 
-# An html fragment whose whole body is one image — what a browser puts on the
-# clipboard for "Copy image". The optional leading comment/meta is the fragment
-# header Chromium and Firefox prepend.
-_IMG_ONLY_HTML = re.compile(
-    r"\A\s*(?:<!--.*?-->\s*|<meta[^>]*>\s*|<html[^>]*>\s*|<body[^>]*>\s*)*"
-    r"<img\b[^>]*>"
-    r"\s*(?:</body>\s*|</html>\s*)*\Z",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
 def _image_is_a_preview(types: List[str]) -> bool:
     """True when an offered image is a *render* of richer content, not the clip.
 
@@ -152,7 +140,7 @@ def _image_is_a_preview(types: List[str]) -> bool:
     if not html_mime or not text_mime:
         return False           # no rich alternative to prefer — keep the image
     html = clipboard.read_text(html_mime) or ""
-    if not html.strip() or _IMG_ONLY_HTML.match(html):
+    if not html.strip() or richtext.is_single_image(html):
         return False
     text = clipboard.read_text(text_mime if "/" in text_mime else None) or ""
     stripped = text.strip()
@@ -253,7 +241,6 @@ def capture_current():
             # do this. Deriving the plain text keeps the clip instead of
             # dropping it, and gives the entry both flavors so either recover
             # mode works.
-            from . import richtext
             text = richtext.html_to_text(html)
             debuglog.log("capture.html_only", derived=len(text))
         if text and text.strip():
