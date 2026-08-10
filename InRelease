@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: all
+Codename: stable
+Components: main
+Date: Mon, 10 Aug 2026 23:42:37 +0000
+Label: Clippy
+Origin: Clippy
+Suite: stable
+MD5Sum:
+ dc0cea05bab54ae7b9d115a13401cf28            40343 Packages
+ fd6b7e4da61ffb8ae839dea8fbe0333d             5098 Packages.gz
+ 402c78b12a9a615d622940114c97521b              134 Release
+SHA1:
+ 46ba1f4fa91273fbd23d2ab6028af2b31a40b769            40343 Packages
+ 003e2283b8b189cb35a77b02ad16a184f94d5ef3             5098 Packages.gz
+ 9450d0181b52bdb5a95fcb9d6cbbb0fa048fbc56              134 Release
+SHA256:
+ 8459a0a964fb8f002335a33bf82b3749c61c325482682f2a768a23e68db7f885            40343 Packages
+ 3ec5f477a087cfdf7f18a27aa07b35dd0c079d0d0cd7b3b56faad60dadfefbf9             5098 Packages.gz
+ aa3cab7752418243cee933f33846a3d755576fe996c88912dd674dd312e7d33a              134 Release
+SHA512:
+ b62b3c08094193e275c01199ac1cf2ed7b5067b28870d29315762bb05115ea8ee3ff2998de0927c37b4d2584a0ddedb4a6cecd0ff561904955239964c1a5df58            40343 Packages
+ a926a1716cb94a6dade1850493fabb99387b60b5c83d8701350590c2f68e08fed94101023cfef7d3604cb9d234509ed22199bd12c77aeccd4cd83782ca95fafe             5098 Packages.gz
+ 4ea120c67ff1ba1a1fe7c89d3811ae4c6145117ca43811ecae503771c15920b3d897123be5964140e8a04bb76b5fd64decaa5be12b50f842a950b71ff5b4e962              134 Release
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEESglAzrIoQzoqsiBrOyybPqXOJnEFAmp6Ye0ACgkQOyybPqXO
+JnFhcRAAkVtDDednzZcc+QrBOGKzjbns+ywsb9/itqskxZawjLx5GR7a5Xvu7GRz
+4SGQPQpeEKY3lIVmgTILTOmL3ucx7HSrOlXr2i6OITOPnnaLKK+nZbVZSaINv0pv
+BgPKnMEBCc9yg1IaiR8xVsGh1gkOMSu9ogQZutCqpXGOOw+B+Srl7tVf4kev9zci
+SfmBXNfmmVHoKMhSKMFFsbgClXNFrLI0n1IhY9UVZMwjB7VJT/j/IbvY+v/jpvNS
+HOogLaDRdylJ2mgnrEzg2XajqNZmKgNOlbkTn9jVtF8dgglTXDjl9VHPCCzpo5CQ
+Ra70V2hIQxtzHkeotAzXIm24igzMgvTCpto2nTxMOVYSherkuva1eQBXr6J1+xZC
+HSRfQchT0Dmjc1n6yjYK0iXqH6qhVYXztmInj/bjvFCLdv0WH8jGkDozNLCSQFtm
+XkQcpLC+qFoPrestL5etC/pKw7vECL7H0TbAXPyIg5mReI++9ZyGoTadD9zDpk4S
+wb7mRGqN8LtEytPtGGmNSoFC7YZjNAPrMXppbYlmdKCNg4Xj2+xnfgQfv81EQWQJ
+DZnWY6SkHToN0yE+fhhwq9Lpqi2F68iazPH+e0z7IFnsDmM4D7lGvF6z66sFDZhQ
+Q0xfVFB7CCI6WpTdrrTfuL4uGBV0RHGHYqExpeP99uMgUz5vzKo=
+=Qt6w
+-----END PGP SIGNATURE-----
