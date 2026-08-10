@@ -1,0 +1,23 @@
+# Dependabot version updates.
+#
+# Only GitHub Actions is watched, deliberately. Clippy's Python dependencies are
+# system packages on Linux (python3-gi, wl-clipboard, python3-nacl,
+# python3-zeroconf — see the .deb's Depends), so there is no lockfile for
+# Dependabot to bump and pinning versions in pyproject.toml would fight the
+# distro rather than help. `pip` ecosystem updates would only touch the optional
+# extras, which CI installs unpinned anyway.
+#
+# Actions are different: they're pinned to major tags in the workflows, they run
+# with repository credentials, and a stale one is a real supply-chain surface.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+    # One PR at a time; this repo has four workflows and a handful of actions.
+    open-pull-requests-limit: 3
