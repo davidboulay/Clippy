@@ -24,7 +24,13 @@ python3 -m venv "$VENV"
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 pip install --quiet --upgrade pip wheel
-pip install --quiet pynacl zeroconf rumps pyobjc-framework-Cocoa pyobjc-framework-Quartz \
+# spake2 is PINNED to 0.8 on purpose: it must match the Debian python3-spake2
+# (0.8) that the Linux build uses, because spake2 0.8 and 0.9 do NOT
+# interoperate on the wire (different group parameters) — a Mac on 0.9 and a
+# Linux box on 0.8 would silently fail to pair. 0.8 is also pure-Python (pulls
+# hkdf, not cryptography), so py2app bundles it cleanly. Do not unpin without
+# re-checking cross-platform pairing against the distro version.
+pip install --quiet pynacl zeroconf "spake2==0.8" rumps pyobjc-framework-Cocoa pyobjc-framework-Quartz \
             pyobjc-framework-QuickLookThumbnailing py2app
 
 # Regenerate a crisp multi-size app icon from the 512px source (Apple tools).
