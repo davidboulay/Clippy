@@ -79,18 +79,45 @@ except OSError:
     raised = "OSError"
 except Exception as exc:                                    # noqa: BLE001
     raised = type(exc).__name__
-check("list_entries raises OSError, not a bare sqlite3.Error", raised, "OSError")
+check("a corrupt database raises OSError, not a bare sqlite3.Error",
+      raised, "OSError")
 check("StorageError is an OSError", issubclass(storage.StorageError, OSError), True)
 
-caught = False
+# Corrupting a file exercises the real path but not every entry point: which
+# statement SQLite rejects first depends on its version and on what survived the
+# overwrite, so asserting per-function against a mangled file is not portable
+# (it passed locally and failed on CI). Inject the error instead — that tests the
+# translation itself, which is the property callers actually rely on.
+import sqlite3 as _sqlite3                                  # noqa: E402
+
+
+def _raising_connect(*_a, **_kw):
+    raise _sqlite3.OperationalError("database is locked")
+
+
+_real_connect = storage._connect
+storage._connect = _raising_connect
 try:
-    try:
-        storage.get(1)
-    except OSError:
-        caught = True
-except Exception:                                           # noqa: BLE001
-    caught = False
-check("the guard callers already write now catches it", caught, True)
+    guarded = []
+    for name, call in (
+        ("get", lambda: storage.get(1)),
+        ("list_entries", lambda: storage.list_entries()),
+        ("count", lambda: storage.count()),
+        ("touch", lambda: storage.touch(1)),
+        ("add_text", lambda: storage.add_text("x")),
+        ("apply_retention", lambda: storage.apply_retention()),
+    ):
+        try:
+            call()
+            guarded.append(f"{name}:no-raise")
+        except OSError:
+            guarded.append(f"{name}:ok")       # the guard callers write catches it
+        except Exception as exc:               # noqa: BLE001
+            guarded.append(f"{name}:{type(exc).__name__}")
+    check("every entry point a caller guards raises OSError on a locked db",
+          [g for g in guarded if not g.endswith(":ok")], [])
+finally:
+    storage._connect = _real_connect
 
 print("IPC stays responsive while a slow command runs")
 started = threading.Event()
