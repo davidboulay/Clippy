@@ -16,8 +16,8 @@ license = { text = "MIT" }
 dependencies = []
 
 [project.optional-dependencies]
-sync = ["pynacl", "zeroconf"]
-macos = ["pynacl", "zeroconf", "pyobjc-framework-Cocoa"]
+sync = ["pynacl", "zeroconf", "spake2"]
+macos = ["pynacl", "zeroconf", "spake2", "pyobjc-framework-Cocoa"]
 
 [project.scripts]
 clippy = "clippy.cli:main"

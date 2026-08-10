@@ -41,15 +41,34 @@ except Exception as _e:  # pragma: no cover
     _HAVE_ZC = False
     _IMPORT_ERROR += f"zeroconf: {_e!r}"
 
+try:
+    from spake2 import SPAKE2_A, SPAKE2_B
+    _HAVE_SPAKE2 = True
+except Exception as _e:  # pragma: no cover - dependency missing
+    _HAVE_SPAKE2 = False
+    _IMPORT_ERROR += f"spake2: {_e!r}  "
+
 
 def import_error() -> str:
     """Why sync is unavailable (the real ImportError), for diagnostics."""
     return _IMPORT_ERROR.strip()
 
 PROTO = 1
-_PAIR_TRANSCRIPT = b"clippy-pair-v1"
+# Pairing protocol version. v1 was a symmetric HMAC the code-holder disclosed in
+# the clear and then accepted echoed back — knowledge of the code was never
+# actually proven to the code-showing side, so any LAN host could pair without
+# it. v2 runs SPAKE2 (a PAKE) keyed by the code: neither side transmits anything
+# an attacker can replay, and a wrong code yields a different session key, so the
+# key-confirmation below cannot pass without the code. The version is exchanged
+# so a v2 device pairing with a v1 one fails with a clear "update" message
+# instead of a confusing error.
+_PAIR_PROTO = 2
+_PAIR_TRANSCRIPT = b"clippy-pair-v2"
 _PAIR_TIMEOUT = 120          # seconds a shown code stays valid
+_PAIR_MAX_ATTEMPTS = 5       # failed guesses before the code is burned
 _CONN_TIMEOUT = 5
+_MAX_PAIR_MSG = 4096         # pre-auth frames (pair_*) are tiny; cap hard
+_MAX_CONN = 16              # concurrent inbound connections; excess is dropped
 _SEEN_MAX = 256
 _SEEN_TTL = 30               # seconds a hash stays "seen". Long enough to absorb
                              # the sync echo (a peer injects a received clip into
@@ -62,7 +81,7 @@ _SEND_BACKOFF = 0.4          # seconds between attempts (grows per round)
 
 
 def sync_available() -> bool:
-    return _HAVE_NACL and _HAVE_ZC
+    return _HAVE_NACL and _HAVE_ZC and _HAVE_SPAKE2
 
 
 _SYNC_LOG = config.DATA_DIR / "sync.log"
@@ -111,20 +130,35 @@ def _send_frame(sock: socket.socket, obj: dict) -> None:
     sock.sendall(struct.pack(">I", len(data)) + data)
 
 
-def _recv_frame(sock: socket.socket) -> Optional[dict]:
+def _unhex(s) -> Optional[bytes]:
+    """Decode a hex string from an untrusted frame, or None if it isn't valid
+    hex. Keeps peer-supplied fields from raising out of a handler."""
+    if not isinstance(s, str):
+        return None
+    try:
+        return bytes.fromhex(s)
+    except ValueError:
+        return None
+
+
+def _recv_frame(sock: socket.socket, limit: int = 64 * 1024 * 1024) -> Optional[dict]:
     hdr = _recv_exact(sock, 4)
     if not hdr:
         return None
     (length,) = struct.unpack(">I", hdr)
-    if length <= 0 or length > 64 * 1024 * 1024:
+    if length <= 0 or length > limit:
         return None
     body = _recv_exact(sock, length)
     if body is None:
         return None
     try:
-        return json.loads(body.decode("utf-8"))
+        obj = json.loads(body.decode("utf-8"))
     except ValueError:
         return None
+    # A JSON body of `5` or `[1]` parses fine but isn't a frame; every caller
+    # does obj.get(...), which would raise on a non-dict. Reject here so one
+    # malformed frame can't crash a handler.
+    return obj if isinstance(obj, dict) else None
 
 
 def _send_raw(sock: socket.socket, data: bytes) -> None:
@@ -211,6 +245,8 @@ class SyncEngine:
         self._browser = None
         self._peers_online: Dict[str, tuple] = {}   # id -> (ip, port, name)
         self._pairing = None                          # dict while in pairing mode
+        self._pair_lock = threading.Lock()            # guards _pairing mutations
+        self._conn_slots = threading.Semaphore(_MAX_CONN)
 
         self.port = port or config.SYNC_PORT
         # Paths are overridable so tests can run two engines in one process.
@@ -494,16 +530,18 @@ class SyncEngine:
         if state_change is ServiceStateChange.Removed:
             self._peers_online.pop(pid, None)
         else:
-            # Heal device_id drift: if this advertised id isn't (canonically)
-            # trusted but its key-fingerprint matches a trusted peer, re-key the
-            # entry to the current id and drop any stale duplicates.
-            if fp:
-                self._adopt_peer_id(fp, pid)
+            # mDNS is a DISCOVERY HINT ONLY — never a source of trust changes.
+            # The id, fingerprint and address in a TXT record are all public and
+            # unauthenticated, so a LAN host can advertise a trusted peer's
+            # fingerprint with an attacker-chosen id/address. Acting on that here
+            # (re-keying the trusted entry, or repointing its stored address)
+            # would let that host hijack where encrypted clips are sent — they
+            # couldn't decrypt them, but the real peer would stop receiving them.
+            # So this only populates the ephemeral _peers_online map, which is
+            # re-derived on every discovery and used merely as a candidate
+            # address. Trust and stored addresses change only on authenticated
+            # paths: pairing (SPAKE2) and _open_frame's post-decrypt adoption.
             self._peers_online[pid] = (ip, info.port, props.get("name", pid))
-            # Keep a paired peer's last-known address fresh for the mDNS-free path.
-            if pid in self.trusted and self.trusted[pid].get("addr") != ip:
-                self.trusted[pid]["addr"] = ip
-                self._save_peers()
         if self._on_status:
             self._on_status()
 
@@ -514,22 +552,40 @@ class SyncEngine:
                 conn, _addr = self._server.accept()
             except OSError:
                 break
+            # Bound concurrent handlers. Anyone who can reach the port — no
+            # pairing needed — could otherwise open connections without limit,
+            # each spawning a thread and able to hold a buffer until its
+            # timeout, exhausting memory and threads. A non-blocking acquire
+            # means excess connections are dropped immediately rather than
+            # queued, so a flood costs nothing; real peers reconnect and retry.
+            if not self._conn_slots.acquire(blocking=False):
+                _log("conn: dropped — too many concurrent connections")
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket) -> None:
-        with conn:
-            conn.settimeout(_CONN_TIMEOUT)
-            frame = _recv_frame(conn)
-            if not frame:
-                return
-            kind = frame.get("type")
-            if kind == "pair_hello":
-                self._handle_pair_server(conn, frame)
-            elif kind == "sync":
-                self._handle_sync(frame)
-            elif kind == "media":
-                conn.settimeout(120)     # a large transfer can take a while
-                self._handle_media(conn, frame)
+        try:
+            with conn:
+                conn.settimeout(_CONN_TIMEOUT)
+                # pair_hello carries only tiny fields; a sync/media frame is the
+                # encrypted envelope (its authenticity is checked in _open_frame).
+                frame = _recv_frame(conn)
+                if not frame:
+                    return
+                kind = frame.get("type")
+                if kind == "pair_hello":
+                    self._handle_pair_server(conn, frame)
+                elif kind == "sync":
+                    self._handle_sync(frame)
+                elif kind == "media":
+                    conn.settimeout(120)     # a large transfer can take a while
+                    self._handle_media(conn, frame)
+        finally:
+            self._conn_slots.release()
 
     # -- sync transport --------------------------------------------------
     def _handle_sync(self, frame: dict) -> None:
@@ -581,7 +637,12 @@ class SyncEngine:
         size = int(manifest.get("size", 0))
         if not h or self._seen_has(h):
             return
-        if size <= 0 or size > settings.get("sync_max_bytes"):
+        # Clamp to the hard ceiling, not just the user's setting: a peer names
+        # the size and we stream that many decrypted bytes to disk, so a value
+        # the user never intended (or a peer claiming a huge transfer) must not
+        # be honoured beyond the ceiling regardless of the stored preference.
+        cap = min(int(settings.get("sync_max_bytes") or 0), config.SYNC_MAX_CEILING)
+        if size <= 0 or size > cap:
             return  # over the cap (or empty) -> refuse
         import hashlib as _hl
         import os
@@ -627,7 +688,18 @@ class SyncEngine:
             else:
                 name = _name_with_ext(
                     os.path.basename(manifest.get("name") or "file") or "file", mime)
+                # basename() strips path separators, but "." and ".." survive it
+                # and would resolve the destination to RECV_DIR itself or its
+                # parent. Fall back to a safe name so a peer can't place the file
+                # outside RECV_DIR by one component.
+                if name in (".", "..") or "/" in name or "\\" in name:
+                    name = "file"
                 dest = self._unique_path(config.RECV_DIR / name)
+                # Final guard: the resolved path must stay inside RECV_DIR.
+                recv_root = os.path.realpath(config.RECV_DIR)
+                if os.path.commonpath([os.path.realpath(dest), recv_root]) != recv_root:
+                    self._safe_unlink(tmp)
+                    return
                 shutil.move(tmp, dest)
                 storage.add_file_from_path(str(dest), name, mime)
                 clipboard.copy_file(str(dest))
@@ -854,43 +926,111 @@ class SyncEngine:
                 self._seen.popitem(last=False)
 
     # -- pairing ---------------------------------------------------------
-    def _pair_confirm(self, code: str, pk_a: str, pk_b: str) -> str:
-        lo, hi = sorted([pk_a, pk_b])
-        msg = _PAIR_TRANSCRIPT + bytes.fromhex(lo) + bytes.fromhex(hi)
-        return hmac.new(code.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    #
+    # Both devices run SPAKE2 keyed by the shown code. SPAKE2 turns the shared
+    # low-entropy code into a shared high-entropy session key WITHOUT either side
+    # transmitting the code, a hash of it, or anything an eavesdropper (or the
+    # peer we're talking to) can offline-crack. Each side then proves it derived
+    # the same key by sending a MAC over a transcript that binds the pairing
+    # version, both SPAKE2 messages and BOTH long-term X25519 identity pubkeys,
+    # so a successful pairing authenticates the keys the data plane will use.
+    #
+    # Why this is not the old scheme: there is nothing to echo. The confirmation
+    # tag is keyed by a session key the attacker cannot compute without the code,
+    # and a wrong code yields a different key on each side, so the MACs simply
+    # don't match. Online guessing is the only attack, and it is bounded by
+    # _PAIR_MAX_ATTEMPTS + the _PAIR_TIMEOUT window.
+    @staticmethod
+    def _pair_key_confirm(session_key: bytes, msg_a: bytes, msg_b: bytes,
+                          pk_a: str, pk_b: str, who: bytes) -> str:
+        """One side's key-confirmation MAC. ``who`` (b"A"/b"B") makes the two
+        sides' tags distinct, so neither can be replayed as the other's."""
+        transcript = (_PAIR_TRANSCRIPT + b"|" + msg_a + b"|" + msg_b + b"|"
+                      + bytes.fromhex(pk_a) + b"|" + bytes.fromhex(pk_b))
+        return hmac.new(session_key, transcript + b"|" + who,
+                        hashlib.sha256).hexdigest()
 
     def enter_pairing(self) -> str:
         """Show-a-code mode (device A). Returns the 6-digit code to display."""
         code = "%06d" % (struct.unpack(">I", os.urandom(4))[0] % 1_000_000)
-        self._pairing = {"code": code, "deadline": time.time() + _PAIR_TIMEOUT}
+        self._pairing = {"code": code, "deadline": time.time() + _PAIR_TIMEOUT,
+                         "attempts": 0}
         return code
 
     def _pairing_active(self) -> Optional[str]:
-        p = self._pairing
-        if p and time.time() < p["deadline"]:
-            return p["code"]
-        self._pairing = None
-        return None
+        # Handlers run one per connection thread, so the window check and the
+        # attempt counter are shared mutable state — guard them, or concurrent
+        # guesses race the counter and a few slip past the cap.
+        with self._pair_lock:
+            p = self._pairing
+            if p and time.time() < p["deadline"] and p["attempts"] < _PAIR_MAX_ATTEMPTS:
+                return p["code"]
+            self._pairing = None
+            return None
+
+    def _pair_fail(self, conn, reason: str) -> None:
+        """Count a failed attempt and burn the code once the cap is hit, so the
+        1e6-code space can't be walked during one 120s window."""
+        with self._pair_lock:
+            if self._pairing is not None:
+                self._pairing["attempts"] = self._pairing.get("attempts", 0) + 1
+                if self._pairing["attempts"] >= _PAIR_MAX_ATTEMPTS:
+                    self._pairing = None
+        try:
+            _send_frame(conn, {"type": "pair_err", "reason": reason})
+        except OSError:
+            pass
 
     def _handle_pair_server(self, conn, frame) -> None:
         code = self._pairing_active()
         if not code:
             _send_frame(conn, {"type": "pair_err", "reason": "not pairing"})
             return
+        if frame.get("proto") != _PAIR_PROTO:
+            _send_frame(conn, {"type": "pair_err",
+                               "reason": "version mismatch — update Clippy on both devices"})
+            return
         pk_b = frame.get("pubkey", "")
         id_b = frame.get("id", "")
         name_b = frame.get("name", id_b)
-        if not pk_b or not id_b:
+        msg_b = _unhex(frame.get("spake", ""))
+        if not pk_b or not id_b or msg_b is None:
+            self._pair_fail(conn, "bad request")
             return
-        confirm = self._pair_confirm(code, self.pubkey_hex, pk_b)
+        try:
+            bytes.fromhex(pk_b)
+        except ValueError:
+            self._pair_fail(conn, "bad request")
+            return
+        # SPAKE2 side A: derive the session key from our message + the peer's.
+        spake = SPAKE2_A(code.encode("utf-8"))
+        msg_a = spake.start()
+        try:
+            session_key = spake.finish(msg_b)
+        except Exception:
+            self._pair_fail(conn, "code mismatch")
+            return
+        our_tag = self._pair_key_confirm(session_key, msg_a, msg_b,
+                                         self.pubkey_hex, pk_b, b"A")
+        peer_expected = self._pair_key_confirm(session_key, msg_a, msg_b,
+                                               self.pubkey_hex, pk_b, b"B")
         _send_frame(conn, {"type": "pair_ack", "id": self.device_id,
                            "name": self.device_name(), "pubkey": self.pubkey_hex,
-                           "confirm": confirm})
-        reply = _recv_frame(conn)
-        if not reply or reply.get("type") != "pair_confirm":
-            return
-        if not hmac.compare_digest(reply.get("confirm", ""), confirm):
-            _send_frame(conn, {"type": "pair_err", "reason": "code mismatch"})
+                           "proto": _PAIR_PROTO, "spake": msg_a.hex(),
+                           "confirm": our_tag})
+        reply = _recv_frame(conn, limit=_MAX_PAIR_MSG)
+        # Any outcome that isn't a valid confirm counts as a failed attempt, so
+        # the code is burned after _PAIR_MAX_ATTEMPTS. This has to cover a
+        # missing/timed-out reply too, not just a mismatched one: with mutual
+        # auth a wrong-code peer detects OUR tag doesn't match and hangs up
+        # before sending its own, and a guessing attacker likewise never
+        # produces a valid confirm — both must be counted, or the cap is
+        # walk-around-able. The comparison is constant-time and against the
+        # value WE computed for the peer (the "B" tag), never one we
+        # transmitted, so there is nothing for an attacker to echo back.
+        if (not reply or reply.get("type") != "pair_confirm"
+                or not hmac.compare_digest(reply.get("confirm", ""), peer_expected)):
+            self._pair_fail(conn, "code mismatch")
             return
         try:
             peer_ip = conn.getpeername()[0]
@@ -900,7 +1040,8 @@ class SyncEngine:
         # discovers it (multicast-blocked networks / multi-homed hosts).
         self.trusted[id_b] = {"name": name_b, "pubkey": pk_b, "addr": peer_ip}
         self._save_peers()
-        self._pairing = None
+        with self._pair_lock:
+            self._pairing = None
         _send_frame(conn, {"type": "paired", "name": self.device_name()})
         if self._on_status:
             self._on_status()
@@ -926,19 +1067,40 @@ class SyncEngine:
         try:
             with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
                 s.settimeout(_CONN_TIMEOUT)
+                # SPAKE2 side B: send our message, receive theirs, derive the key.
+                spake = SPAKE2_B(code.encode("utf-8"))
+                msg_b = spake.start()
                 _send_frame(s, {"type": "pair_hello", "id": self.device_id,
-                                "name": self.device_name(), "pubkey": self.pubkey_hex})
-                ack = _recv_frame(s)
+                                "name": self.device_name(), "pubkey": self.pubkey_hex,
+                                "proto": _PAIR_PROTO, "spake": msg_b.hex()})
+                ack = _recv_frame(s, limit=_MAX_PAIR_MSG)
                 if not ack or ack.get("type") != "pair_ack":
                     return {"ok": False, "error": (ack or {}).get("reason", "no ack")}
                 pk_a = ack.get("pubkey", "")
-                expect = self._pair_confirm(code, pk_a, self.pubkey_hex)
-                if not hmac.compare_digest(ack.get("confirm", ""), expect):
+                msg_a = _unhex(ack.get("spake", ""))
+                if not pk_a or msg_a is None:
+                    return {"ok": False, "error": "bad response"}
+                try:
+                    bytes.fromhex(pk_a)
+                except ValueError:
+                    return {"ok": False, "error": "bad response"}
+                try:
+                    session_key = spake.finish(msg_a)
+                except Exception:
                     return {"ok": False, "error": "code mismatch"}
-                _send_frame(s, {"type": "pair_confirm", "confirm": expect})
-                done = _recv_frame(s)
+                # Verify the peer proved the SAME code (its "A" tag), then send
+                # our own "B" tag. A wrong code makes these keys differ, so the
+                # peer's tag won't match and ours won't satisfy the peer either.
+                peer_expected = self._pair_key_confirm(session_key, msg_a, msg_b,
+                                                       pk_a, self.pubkey_hex, b"A")
+                if not hmac.compare_digest(ack.get("confirm", ""), peer_expected):
+                    return {"ok": False, "error": "code mismatch"}
+                our_tag = self._pair_key_confirm(session_key, msg_a, msg_b,
+                                                 pk_a, self.pubkey_hex, b"B")
+                _send_frame(s, {"type": "pair_confirm", "confirm": our_tag})
+                done = _recv_frame(s, limit=_MAX_PAIR_MSG)
                 if not done or done.get("type") != "paired":
-                    return {"ok": False, "error": "peer rejected"}
+                    return {"ok": False, "error": (done or {}).get("reason", "peer rejected")}
                 self.trusted[ack["id"]] = {"name": ack.get("name", ack["id"]),
                                            "pubkey": pk_a, "addr": ip}
                 self._save_peers()
