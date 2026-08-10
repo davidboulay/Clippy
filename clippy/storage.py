@@ -17,6 +17,18 @@ from typing import List, Optional
 
 from . import config, settings
 
+# De-duplication is scoped to (kind, hash), not hash alone. The same bytes can
+# legitimately be two different clips: copy a picture in a browser and you get an
+# image entry, copy the file it was saved to and you get a file entry — identical
+# content, but recovering one hands over raw bytes and the other hands over a
+# file reference. With a table-wide UNIQUE(hash) the second copy silently
+# de-duplicated into the first, so the file copy produced no file entry and
+# pasting it dropped image bytes where a file was expected.
+#
+# The hash column itself stays the plain sha256 of the content: the X11 owner
+# recognises its own publish echoing back by comparing that digest against what
+# it published (see x11clip.note_published), so namespacing the digest itself
+# would silently break echo detection.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,10 +38,11 @@ CREATE TABLE IF NOT EXISTS entries (
     mime        TEXT,                        -- source MIME type
     image_path  TEXT,                        -- blob file path (image/file entries)
     filename    TEXT,                        -- original name (file entries)
-    hash        TEXT    NOT NULL UNIQUE,     -- sha256 of content
+    hash        TEXT    NOT NULL,            -- sha256 of content
     size        INTEGER NOT NULL DEFAULT 0,  -- bytes
     pinned      INTEGER NOT NULL DEFAULT 0,
-    created_at  REAL    NOT NULL
+    created_at  REAL    NOT NULL,
+    UNIQUE (kind, hash)
 );
 CREATE INDEX IF NOT EXISTS idx_entries_order
     ON entries (pinned DESC, created_at DESC);
@@ -63,6 +76,17 @@ class Entry:
         return bool(self.html)
 
 
+class StorageError(OSError):
+    """A database failure, raised as an OSError so existing callers catch it.
+
+    ``sqlite3.OperationalError`` is *not* an ``OSError``, so a locked or corrupt
+    database sailed straight through every ``except OSError`` guard around a
+    storage call and out through whatever was above it — killing a capture, an
+    IPC handler, or the retention sweep with a traceback nobody saw. The
+    database is a file, callers already treat storage as file I/O, so failures
+    are surfaced in the shape they already handle."""
+
+
 def _connect() -> sqlite3.Connection:
     config.ensure_dirs()
     conn = sqlite3.connect(config.DB_PATH, timeout=10)
@@ -79,6 +103,62 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE entries ADD COLUMN html TEXT")
     if "filename" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN filename TEXT")
+    _widen_hash_uniqueness(conn)
+
+
+def _widen_hash_uniqueness(conn: sqlite3.Connection) -> None:
+    """Move a legacy table-wide UNIQUE(hash) to UNIQUE(kind, hash).
+
+    SQLite can't alter a constraint in place, so this is the documented
+    rebuild: create the table with the new shape, copy the rows, swap the names.
+    Rows can't collide under the wider key — they were unique on `hash` alone,
+    which is strictly stronger — so the copy cannot lose an entry. Wrapped in a
+    transaction, and skipped entirely once done, so it runs at most once per
+    database and leaves history untouched if anything fails."""
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='entries'"
+    ).fetchone()
+    if not sql or "UNIQUE (kind, hash)" in (sql["sql"] or ""):
+        return                      # already the new shape (or no table yet)
+    if "UNIQUE" not in (sql["sql"] or ""):
+        return                      # no uniqueness to widen
+    try:
+        conn.executescript("""
+            BEGIN;
+            CREATE TABLE entries_migrating (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind        TEXT    NOT NULL,
+                text        TEXT,
+                html        TEXT,
+                mime        TEXT,
+                image_path  TEXT,
+                filename    TEXT,
+                hash        TEXT    NOT NULL,
+                size        INTEGER NOT NULL DEFAULT 0,
+                pinned      INTEGER NOT NULL DEFAULT 0,
+                created_at  REAL    NOT NULL,
+                UNIQUE (kind, hash)
+            );
+            INSERT INTO entries_migrating
+                (id, kind, text, html, mime, image_path, filename,
+                 hash, size, pinned, created_at)
+                SELECT id, kind, text, html, mime, image_path, filename,
+                       hash, size, pinned, created_at FROM entries;
+            DROP TABLE entries;
+            ALTER TABLE entries_migrating RENAME TO entries;
+            CREATE INDEX IF NOT EXISTS idx_entries_order
+                ON entries (pinned DESC, created_at DESC);
+            COMMIT;
+        """)
+    except sqlite3.Error:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        # Keeping the old constraint costs an occasional cross-kind de-dupe;
+        # a half-migrated history would cost the history.
+        from . import debuglog
+        debuglog.log("storage.migrate_failed", step="widen_hash_uniqueness")
 
 
 def _row_to_entry(row: sqlite3.Row) -> Entry:
@@ -104,17 +184,45 @@ def add_text(text: str, mime: str = "text/plain", html: Optional[str] = None) ->
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     now = time.time()
     with _connect() as conn:
-        conn.execute(
+        # Deliberately NOT an `ON CONFLICT(...)` upsert. That clause has to name
+        # a constraint that exists, which welds this query to one schema version:
+        # a database migrated to UNIQUE(kind, hash) makes `ON CONFLICT(hash)`
+        # raise OperationalError on *every* text capture, so an older build
+        # sharing the same history file — an interrupted upgrade, a downgrade, a
+        # daemon still running from the previous package — stops recording
+        # anything at all. Insert-then-handle-collision needs no constraint name
+        # and works against either shape.
+        existing = conn.execute(
+            "SELECT id, html FROM entries WHERE kind='text' AND hash=?", (digest,)
+        ).fetchone()
+        if existing:
+            # Keep the existing html when the new capture has none. This looks
+            # like a bug — re-copying the same sentence from a plain editor
+            # leaves the formatting from an earlier rich copy attached, so "Copy
+            # with formatting" offers markup that didn't come from this copy.
+            # Overwriting is worse: recovering a rich clip as plain text (what
+            # the always-plain-text setting does) comes straight back as a
+            # capture with no html flavor, and would erase the formatting the
+            # entry was kept for. Stale markup is cosmetic; deleting the user's
+            # formatting is not.
+            conn.execute(
+                "UPDATE entries SET created_at=?, html=COALESCE(?, html), mime=?"
+                " WHERE id=?",
+                (now, html, mime, existing["id"]),
+            )
+            _prune_count(conn)
+            return existing["id"]
+        row_id = _insert_or_bump(
+            conn,
             """INSERT INTO entries (kind, text, html, mime, hash, size, created_at)
-               VALUES ('text', ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(hash) DO UPDATE SET
-                   created_at = excluded.created_at,
-                   html = COALESCE(excluded.html, entries.html)""",
+               VALUES ('text', ?, ?, ?, ?, ?, ?)""",
             (text, html, mime, digest, len(text.encode("utf-8")), now),
+            "text", digest, now,
         )
-        row = conn.execute("SELECT id FROM entries WHERE hash=?", (digest,)).fetchone()
         _prune_count(conn)
-        return row["id"] if row else None
+        return row_id
+
+
 
 
 _IMAGE_EXTS = {
@@ -134,13 +242,14 @@ def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
         debuglog.log("storage.image_too_big", bytes=len(data),
                      cap=config.MAX_IMAGE_BYTES)
         return None
+    kind = "image"
     digest = hashlib.sha256(data).hexdigest()
     now = time.time()
     ext = _IMAGE_EXTS.get((mime or "").split(";")[0].strip().lower(), "png")
     path = config.IMAGE_DIR / f"{digest}.{ext}"
     with _connect() as conn:
         existing = conn.execute(
-            "SELECT id FROM entries WHERE hash=?", (digest,)
+            "SELECT id FROM entries WHERE kind=? AND hash=?", (kind, digest)
         ).fetchone()
         if existing:
             conn.execute(
@@ -154,14 +263,14 @@ def add_image(data: bytes, mime: str = "image/png") -> Optional[int]:
             """INSERT INTO entries (kind, mime, image_path, hash, size, created_at)
                VALUES ('image', ?, ?, ?, ?, ?)""",
             (mime, str(path), digest, len(data), now),
-            digest, now,
+            kind, digest, now,
         )
         _prune_count(conn)
         return row_id
 
 
 def _insert_or_bump(conn: sqlite3.Connection, sql: str, params: tuple,
-                    digest: str, now: float) -> Optional[int]:
+                    kind: str, digest: str, now: float) -> Optional[int]:
     """Run an INSERT that may collide on the UNIQUE content hash, and return the
     row's id either way.
 
@@ -170,13 +279,16 @@ def _insert_or_bump(conn: sqlite3.Connection, sql: str, params: tuple,
     ``wl-paste --watch`` hook it just spawned fires for the same selection. The
     loser used to raise IntegrityError out of capture, so that copy was lost.
     Treat a collision as what it is — the same content, already stored — and
-    bump it to the front like any re-copy."""
+    bump it to the front like any re-copy. Scoped by ``kind``: the same bytes
+    are allowed to exist once as an image and once as a file."""
     try:
         cur = conn.execute(sql, params)
         return cur.lastrowid
     except sqlite3.IntegrityError:
-        conn.execute("UPDATE entries SET created_at=? WHERE hash=?", (now, digest))
-        row = conn.execute("SELECT id FROM entries WHERE hash=?", (digest,)).fetchone()
+        conn.execute("UPDATE entries SET created_at=? WHERE kind=? AND hash=?",
+                     (now, kind, digest))
+        row = conn.execute("SELECT id FROM entries WHERE kind=? AND hash=?",
+                           (kind, digest)).fetchone()
         return row["id"] if row else None
 
 
@@ -198,12 +310,13 @@ def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> 
     """Store an arbitrary file entry. Bytes written to FILE_DIR, original name kept."""
     if not data or len(data) > config.SYNC_MAX_CEILING:
         return None
+    kind = "file"
     digest = hashlib.sha256(data).hexdigest()
     now = time.time()
     path = config.FILE_DIR / (digest + _blob_ext(name, mime))   # content-addressed blob
     with _connect() as conn:
         existing = conn.execute(
-            "SELECT id FROM entries WHERE hash=?", (digest,)
+            "SELECT id FROM entries WHERE kind=? AND hash=?", (kind, digest)
         ).fetchone()
         if existing:
             conn.execute(
@@ -217,7 +330,7 @@ def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> 
             """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
                VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
             (name, mime, str(path), name, digest, len(data), now),
-            digest, now,
+            kind, digest, now,
         )
         _prune_count(conn)
         return row_id
@@ -238,12 +351,13 @@ def add_file_from_path(src: str, name: str,
     with open(src, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
+    kind = "file"
     digest = h.hexdigest()
     now = time.time()
     path = config.FILE_DIR / (digest + _blob_ext(name, mime))
     with _connect() as conn:
         existing = conn.execute(
-            "SELECT id FROM entries WHERE hash=?", (digest,)
+            "SELECT id FROM entries WHERE kind=? AND hash=?", (kind, digest)
         ).fetchone()
         if existing:
             conn.execute("UPDATE entries SET created_at=? WHERE id=?",
@@ -256,7 +370,7 @@ def add_file_from_path(src: str, name: str,
             """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
                VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
             (name, mime, str(path), name, digest, size, now),
-            digest, now,
+            kind, digest, now,
         )
         _prune_count(conn)
         return row_id
@@ -435,3 +549,34 @@ def _maybe_unlink(path: Path) -> None:
             path.unlink()
     except OSError:
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Surface database failures as OSError (see StorageError).
+#
+# Applied here in one place rather than as a decorator on each function so the
+# list of what's covered is visible and can't drift: every entry point a caller
+# outside this module uses goes through the same translation.
+# --------------------------------------------------------------------------- #
+def _as_os_error(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except sqlite3.Error as exc:
+            from . import debuglog
+            debuglog.log("storage.db_error", fn=fn.__name__, error=exc)
+            raise StorageError(f"{fn.__name__}: {exc}") from exc
+
+    return wrapper
+
+
+for _name in (
+    "add_text", "add_image", "add_file", "add_file_from_path",
+    "list_entries", "count", "get", "touch", "latest_created_at",
+    "delete", "toggle_pin", "clear", "apply_retention",
+):
+    globals()[_name] = _as_os_error(globals()[_name])
+del _name

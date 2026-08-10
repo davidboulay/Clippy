@@ -42,6 +42,12 @@ jobs:
       - name: Recover flavors (plain text beside html, ownership digests)
         run: PYTHONPATH=. python scripts/recover_flavors_test.py
 
+      - name: Storage migration (UNIQUE(kind, hash) rebuild preserves history)
+        run: PYTHONPATH=. python scripts/storage_migration_test.py
+
+      - name: Resilience (db errors, IPC concurrency, sound debounce)
+        run: PYTHONPATH=. python scripts/resilience_test.py
+
       - name: mDNS readvertise self-test
         run: PYTHONPATH=. python scripts/sync_readvertise_test.py
 

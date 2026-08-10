@@ -538,12 +538,31 @@ def run_daemon() -> int:
     return 0
 
 
+_retention_failures = 0
+_RETENTION_WARN_AFTER = 3
+
+
 def storage_apply_retention_safe() -> None:
+    """Run the retention sweep, surviving any failure — but not silently.
+
+    The catch has to be broad, because this runs on a repeating timer and an
+    exception would end it. Swallowing it entirely was the problem: a corrupt or
+    unwritable database meant retention never ran again, history and the blob
+    directory grew without bound, and nothing anywhere said so. Now every
+    failure is logged, and a run of them earns one notification."""
+    global _retention_failures
     from . import storage
     try:
         storage.apply_retention()
-    except Exception:
-        pass
+        _retention_failures = 0
+    except Exception as exc:
+        _retention_failures += 1
+        debuglog.log("retention.failed", error=exc, run=_retention_failures)
+        if _retention_failures == _RETENTION_WARN_AFTER:
+            notify.send(
+                "Clippy can't tidy its history — old clips aren't being removed.",
+                "Clippy",
+            )
 
 
 def _simple_note(body: str) -> None:

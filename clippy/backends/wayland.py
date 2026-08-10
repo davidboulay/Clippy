@@ -27,6 +27,14 @@ def _note_published(*payloads: bytes) -> None:
     x11clip.note_published(*(hashlib.sha256(p).hexdigest() for p in payloads if p))
 
 
+# A recover runs on the GTK main thread, so every blocking call here is UI
+# freeze the user feels. The normal path is a couple of hundred milliseconds
+# (an acknowledged publish plus a wl-copy that forks straight away); a write
+# still going after this long is not going to succeed, and failing fast leaves
+# the panel responsive instead of hung.
+_WRITE_TIMEOUT = 5
+
+
 class WaylandBackend:
     def require_tools(self) -> None:
         missing = [t for t in ("wl-paste", "wl-copy") if shutil.which(t) is None]
@@ -137,7 +145,7 @@ class WaylandBackend:
         if x11clip.publish(data):
             _note_published(data)
             return
-        subprocess.run(["wl-copy"], input=data, timeout=10)
+        subprocess.run(["wl-copy"], input=data, timeout=_WRITE_TIMEOUT)
         self._x11_mirror(None, data)
 
     def copy_html(self, html: str, text: Optional[str] = None) -> None:
@@ -164,7 +172,8 @@ class WaylandBackend:
         # No persistent owner: fall back to one flavor per channel. Plain text
         # reaches far more apps than html does, so when only one can be served,
         # serve the one that pastes.
-        subprocess.run(["wl-copy", "--type", "text/html"], input=data, timeout=10)
+        subprocess.run(["wl-copy", "--type", "text/html"], input=data,
+                       timeout=_WRITE_TIMEOUT)
         self._x11_mirror(None, plain_data or data)
 
     def copy_image(self, data: bytes, mime: str) -> None:
@@ -209,7 +218,8 @@ class WaylandBackend:
         # compositor's re-encoding of them, and going last means our source
         # replaces the proxy rather than the other way round.
         try:
-            subprocess.run(["wl-copy", "--type", mime], input=data, timeout=15)
+            subprocess.run(["wl-copy", "--type", mime], input=data,
+                           timeout=_WRITE_TIMEOUT)
         except (subprocess.SubprocessError, OSError) as exc:
             debuglog.log("copy_image.wl_copy_failed", error=exc)
         if not published:
@@ -361,7 +371,7 @@ class WaylandBackend:
         uri = urllib.request.pathname2url(path)
         payload = f"copy\nfile://{uri}".encode("utf-8")
         subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
-                       input=payload, timeout=15)
+                       input=payload, timeout=_WRITE_TIMEOUT)
         # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
         # (editors, some chat apps) see it too.
         self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))

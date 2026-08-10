@@ -89,32 +89,46 @@ class Server:
         self._thread.start()
 
     def _serve(self) -> None:
+        """Accept loop. Each connection is handled on its own short-lived thread.
+
+        Serving them one at a time meant a slow command blocked every other one,
+        and one command is deliberately slow: ``pair`` waits on a human at the
+        other device for up to two minutes. During that wait, every copy's
+        ``_current`` (which keeps the X11 selection in step with the clipboard)
+        and every ``ping`` timed out, so pairing quietly broke capture. The
+        handlers are already safe to run concurrently — UI work is marshalled
+        through ``GLib.idle_add`` and both the X11 owner and the sync engine are
+        lock-guarded."""
         assert self._sock is not None
         while self._running:
             try:
                 conn, _ = self._sock.accept()
             except OSError:
                 break
-            with conn:
+            threading.Thread(target=self._handle, args=(conn,),
+                             daemon=True).start()
+
+    def _handle(self, conn: socket.socket) -> None:
+        with conn:
+            try:
+                conn.settimeout(30)
+                data = conn.recv(4096).decode("utf-8", "replace").strip()
+            except OSError:
+                return
+            cmd, _, arg = data.partition(" ")
+            if cmd == "ping":
+                self._reply(conn, "pong")
+            elif cmd in QUERY_COMMANDS and self._query is not None:
                 try:
-                    conn.settimeout(30)
-                    data = conn.recv(4096).decode("utf-8", "replace").strip()
-                except OSError:
-                    continue
-                cmd, _, arg = data.partition(" ")
-                if cmd == "ping":
-                    self._reply(conn, "pong")
-                elif cmd in QUERY_COMMANDS and self._query is not None:
-                    try:
-                        reply = self._query(cmd, arg.strip())
-                    except Exception as exc:
-                        reply = f"err {exc}"
-                    self._reply(conn, reply if reply is not None else "ok")
-                elif cmd in VALID_COMMANDS:
-                    self._reply(conn, "ok")
-                    self._handler(cmd)
-                else:
-                    self._reply(conn, "err")
+                    reply = self._query(cmd, arg.strip())
+                except Exception as exc:
+                    reply = f"err {exc}"
+                self._reply(conn, reply if reply is not None else "ok")
+            elif cmd in VALID_COMMANDS:
+                self._reply(conn, "ok")
+                self._handler(cmd)
+            else:
+                self._reply(conn, "err")
 
     @staticmethod
     def _reply(conn: socket.socket, msg: str) -> None:
