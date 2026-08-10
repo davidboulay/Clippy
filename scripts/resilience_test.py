@@ -64,30 +64,20 @@ check("a burst for one entry plays at most once", sum(results) <= 1, True)
 
 print("database failures reach callers as OSError")
 storage.add_text("seed entry")
-check("storage works before corruption", storage.count() >= 1, True)
-with open(storage.config.DB_PATH, "r+b") as fh:
-    fh.write(b"this is definitely not a sqlite database")
-for suffix in ("-wal", "-shm"):
-    stray = Path(str(storage.config.DB_PATH) + suffix)
-    if stray.exists():
-        stray.unlink()
-
-raised = None
-try:
-    storage.list_entries()
-except OSError:
-    raised = "OSError"
-except Exception as exc:                                    # noqa: BLE001
-    raised = type(exc).__name__
-check("a corrupt database raises OSError, not a bare sqlite3.Error",
-      raised, "OSError")
+check("storage works normally first", storage.count() >= 1, True)
 check("StorageError is an OSError", issubclass(storage.StorageError, OSError), True)
 
-# Corrupting a file exercises the real path but not every entry point: which
-# statement SQLite rejects first depends on its version and on what survived the
-# overwrite, so asserting per-function against a mangled file is not portable
-# (it passed locally and failed on CI). Inject the error instead — that tests the
-# translation itself, which is the property callers actually rely on.
+# Injected rather than provoked by corrupting the database file. Overwriting a
+# SQLite header looks like the more honest test, but it is not a stable fixture:
+# whether — and at which statement — SQLite rejects the file depends on its
+# version, on WAL checkpoint timing, and on what survived the overwrite. Two CI
+# runs of identical code disagreed about it, and each disagreed with this
+# machine. A flaky assertion is worse than none, because it teaches you to
+# ignore the signal.
+#
+# What the code under test actually does is translate sqlite3.Error into an
+# OSError subclass at the storage boundary, so that is what gets asserted, at
+# every entry point a caller wraps in `except OSError`.
 import sqlite3 as _sqlite3                                  # noqa: E402
 
 
