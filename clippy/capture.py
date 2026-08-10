@@ -5,9 +5,10 @@ and by the daemon's one-shot capture at startup. GTK-free on purpose.
 """
 from __future__ import annotations
 
-from typing import Optional
+import re
+from typing import List, Optional
 
-from . import clipboard, config, settings, sound, storage
+from . import clipboard, config, debuglog, settings, sound, storage
 
 # When Clippy mirrors an image/file copy to the X11 clipboard, XWayland
 # re-publishes it onto the Wayland clipboard, which fires wl-paste --watch a
@@ -17,6 +18,11 @@ from . import clipboard, config, settings, sound, storage
 # the last-played id+time is kept in a small state file rather than in memory.
 _SOUND_STATE = config.DATA_DIR / ".last_sound"
 _SOUND_DEBOUNCE = 1.5  # seconds
+
+# Files stored from a single multi-file copy. A bound, not a preference: a
+# "select all" in a big folder would otherwise hash every file inline, inside
+# the watcher hook that blocks the next capture.
+_MAX_FILES = 25
 
 
 def _should_play_sound(entry_id: int) -> bool:
@@ -42,13 +48,26 @@ def _should_play_sound(entry_id: int) -> bool:
 # a fresh entry — a duplicate tile that renders as "image unavailable". Left
 # unchecked it compounds: each pass prefixes the previous one, which is what drove
 # a 213-entry runaway with sizes climbing +4 each round.
-_IMAGE_MAGIC = {
-    "image/png": (b"\x89PNG\r\n\x1a\n",),
-    "image/jpeg": (b"\xff\xd8\xff",),
-    "image/jpg": (b"\xff\xd8\xff",),
-    "image/bmp": (b"BM",),
-    "image/tiff": (b"II*\x00", b"MM\x00*"),
-}
+# Predicates rather than plain prefixes: the container formats (WebP, AVIF/HEIF)
+# identify themselves a few bytes in, not at offset zero.
+_IMAGE_SIGS = (
+    ("image/png", lambda d: d.startswith(b"\x89PNG\r\n\x1a\n")),
+    ("image/jpeg", lambda d: d.startswith(b"\xff\xd8\xff")),
+    ("image/gif", lambda d: d.startswith((b"GIF87a", b"GIF89a"))),
+    ("image/webp", lambda d: d[:4] == b"RIFF" and d[8:12] == b"WEBP"),
+    ("image/bmp", lambda d: d.startswith(b"BM")),
+    ("image/tiff", lambda d: d.startswith((b"II*\x00", b"MM\x00*"))),
+    ("image/avif", lambda d: d[4:8] == b"ftyp" and d[8:12] in (b"avif", b"avis")),
+    ("image/heif", lambda d: d[4:8] == b"ftyp"
+        and d[8:12] in (b"heic", b"heix", b"heim", b"heis", b"mif1")),
+)
+
+
+def _canonical_image_mime(mime: str) -> str:
+    """Lower-cased type with parameters dropped, and ``image/jpg`` folded into
+    the canonical ``image/jpeg`` (apps offer both spellings for one format)."""
+    base = (mime or "").split(";")[0].strip().lower()
+    return "image/jpeg" if base == "image/jpg" else base
 
 
 def _looks_like_image(data: bytes, mime: str) -> bool:
@@ -56,26 +75,64 @@ def _looks_like_image(data: bytes, mime: str) -> bool:
 
     Only rejects when the magic for a *known* type is missing, so an unrecognised
     image type is still stored rather than silently dropped."""
-    magic = _IMAGE_MAGIC.get((mime or "").split(";")[0].strip().lower())
-    if not magic:
-        return True
-    return any(data.startswith(m) for m in magic)
+    want = _canonical_image_mime(mime)
+    for name, matches in _IMAGE_SIGS:
+        if name == want:
+            return matches(data)
+    return True
 
 
 def sniff_image_mime(data: bytes) -> Optional[str]:
     """The image type `data` actually *is*, from its magic — or None when it
     matches nothing we know. The inverse of ``_looks_like_image``, which only
     checks bytes against a claim; this derives the claim from the bytes so a
-    mislabelled payload can be corrected instead of merely rejected.
-
-    ``image/jpg`` is skipped in favour of the canonical ``image/jpeg`` (both
-    share one magic, so iteration order would otherwise decide it)."""
-    for mime, magic in _IMAGE_MAGIC.items():
-        if mime == "image/jpg":
-            continue
-        if any(data.startswith(m) for m in magic):
-            return mime
+    mislabelled payload can be corrected instead of merely rejected."""
+    for name, matches in _IMAGE_SIGS:
+        if matches(data):
+            return name
     return None
+
+
+# An html fragment whose whole body is one image — what a browser puts on the
+# clipboard for "Copy image". The optional leading comment/meta is the fragment
+# header Chromium and Firefox prepend.
+_IMG_ONLY_HTML = re.compile(
+    r"\A\s*(?:<!--.*?-->\s*|<meta[^>]*>\s*|<html[^>]*>\s*|<body[^>]*>\s*)*"
+    r"<img\b[^>]*>"
+    r"\s*(?:</body>\s*|</html>\s*)*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _image_is_a_preview(types: List[str]) -> bool:
+    """True when an offered image is a *render* of richer content, not the clip.
+
+    Spreadsheet and document apps (OnlyOffice, LibreOffice, Excel) put a bitmap
+    picture of the selection on the clipboard next to the real thing — the cell
+    text and an html table. Because capture prefers images over text, copying a
+    few cells was filed as a picture: no searchable text, and pasting it back
+    dropped a screenshot into the target instead of data.
+
+    The inverse case has to keep working, so this stays deliberately narrow. A
+    browser's "Copy image" *also* offers html and text alongside the bytes — but
+    its html is just the ``<img>`` tag and its text is the image's URL, and there
+    the picture really is the content. So: rich content wins only when the html
+    is more than an image wrapper and the plain text isn't a bare link."""
+    html_mime = clipboard.pick_html_type(types)
+    text_mime = clipboard.pick_text_type(types)
+    if not html_mime or not text_mime:
+        return False           # no rich alternative to prefer — keep the image
+    html = clipboard.read_text(html_mime) or ""
+    if not html.strip() or _IMG_ONLY_HTML.match(html):
+        return False
+    text = clipboard.read_text(text_mime if "/" in text_mime else None) or ""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if "\n" not in stripped and stripped.lower().startswith(
+            ("http://", "https://", "data:", "file://")):
+        return False           # a bare URL beside an image — the image is the clip
+    return True
 
 
 def _is_own_staging(path: str) -> bool:
@@ -109,6 +166,7 @@ def capture_current():
     if not types:
         return None
 
+    debuglog.log("capture.types", types=",".join(types))
     new_id = None
     # Check for a copied FILE first. macOS (and some Linux apps) also place a
     # rendered preview on the clipboard when you copy an image *file* in the file
@@ -117,23 +175,40 @@ def capture_current():
     # with the original name/extension.
     file_paths = [p for p in clipboard.read_file_paths(types)
                   if not _is_own_staging(p)]
+    image_mime = clipboard.pick_image_type(types)
     if file_paths:
         import mimetypes
         import os
-        src = file_paths[0]
-        name = os.path.basename(src) or "file"
-        mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
-        new_id = storage.add_file_from_path(src, name, mime)
-    elif clipboard.pick_image_type(types):
+        # Every file, not just the first: selecting three files in the file
+        # manager and copying used to file one and silently drop the rest. The
+        # first is the primary — its id is what gets broadcast and sounded — and
+        # the others are stored so they're in history too. Capped because a
+        # "select all" in a large folder would otherwise hash the whole thing.
+        for src in file_paths[:_MAX_FILES]:
+            name = os.path.basename(src) or "file"
+            mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
+            stored = storage.add_file_from_path(src, name, mime)
+            if new_id is None:
+                new_id = stored
+    elif image_mime and not _image_is_a_preview(types):
         # Image DATA copied from an app (e.g. Copy Image), no file involved.
-        image_mime = clipboard.pick_image_type(types)
         data = clipboard.read_bytes(image_mime)
         if data and not _looks_like_image(data, image_mime):
-            return None          # corrupt read (see _IMAGE_MAGIC) — don't file it
+            # The bytes aren't the format they claim. Prefer believing the bytes
+            # (a mislabelled but valid image is still a clip); only give up when
+            # they aren't a recognisable image at all — see _IMAGE_SIGS.
+            actual = sniff_image_mime(data)
+            if actual is None:
+                debuglog.log("capture.corrupt_image", mime=image_mime, bytes=len(data))
+                return None
+            debuglog.log("capture.remimed", claimed=image_mime, actual=actual)
+            image_mime = actual
         if data:
             new_id = storage.add_image(data, image_mime)
     else:
         text_mime = clipboard.pick_text_type(types)
+        html_mime = clipboard.pick_html_type(types)
+        text = ""
         if text_mime:
             arg = text_mime if "/" in text_mime else None
             text = clipboard.read_text(arg)
@@ -142,17 +217,22 @@ def capture_current():
                 # (e.g. a case-variant MIME like ';charset=UTF-8'); let wl-paste
                 # pick a servable type instead of dropping the copy entirely.
                 text = clipboard.read_text(None)
-            if text and text.strip():
-                # Capture the rich version too, so "paste with formatting" works.
-                html = None
-                html_mime = clipboard.pick_html_type(types)
-                if html_mime:
-                    html = clipboard.read_text(html_mime) or None
-                new_id = storage.add_text(
-                    text,
-                    text_mime if "/" in text_mime else "text/plain",
-                    html=html,
-                )
+        # Capture the rich version too, so "paste with formatting" works.
+        html = clipboard.read_text(html_mime) if html_mime else None
+        if not (text and text.strip()) and html and html.strip():
+            # An offer with html and no plain flavor at all — some rich editors
+            # do this. Deriving the plain text keeps the clip instead of
+            # dropping it, and gives the entry both flavors so either recover
+            # mode works.
+            from . import richtext
+            text = richtext.html_to_text(html)
+            debuglog.log("capture.html_only", derived=len(text))
+        if text and text.strip():
+            new_id = storage.add_text(
+                text,
+                text_mime if (text_mime and "/" in text_mime) else "text/plain",
+                html=html or None,
+            )
 
     if new_id is not None:
         prefs = settings.load()

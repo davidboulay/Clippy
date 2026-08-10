@@ -43,13 +43,15 @@ Split in two halves:
 """
 from __future__ import annotations
 
-import hashlib
 import os
+import select
 import struct
 import subprocess
 import sys
 import threading
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
+
+from . import debuglog
 
 # Frame protocol (daemon -> helper, over the helper's stdin):
 #   1 byte  kind: b'T' legacy text, b'P' multi-part
@@ -62,6 +64,21 @@ from typing import List, Optional, Sequence, Tuple
 #
 # A "part" is one MIME flavor of the *same* clip; all parts are offered together
 # on one selection, so each consumer picks whichever flavor it understands.
+#
+# Reply protocol (helper -> daemon, over the helper's stdout), one byte each:
+#   b'R'  ready — GTK initialized, an X display is open, stdin is being read
+#   b'A'  the last frame was accepted and is now the live selection
+#   b'N'  the last frame was refused (set_content failed)
+#
+# Without these the daemon could only observe that bytes entered a pipe, which
+# is not the same as a clip being served: a helper that loses its X display
+# exits *after* the write succeeded, so publish() reported success for a clip
+# that reached no channel at all — and the caller skipped its fallbacks. The
+# ready byte additionally guarantees someone is draining stdin before we push a
+# large frame into it, so a doomed helper can't block the caller on a full pipe.
+READY, ACK, NACK = b"R", b"A", b"N"
+_READY_TIMEOUT = 2.0    # seconds to wait for a fresh helper to come up
+_ACK_TIMEOUT = 2.0      # seconds to wait for a frame to be applied
 
 TEXT_MIMES = ("text/plain;charset=utf-8", "text/plain")
 
@@ -120,6 +137,24 @@ def run() -> int:
     Exits when stdin closes (the daemon is gone) or GTK can't reach an X
     display. Returns non-zero only when it never managed to start."""
     os.environ["GDK_BACKEND"] = "x11"   # be an XWayland client, not a Wayland one
+
+    # Claim fd 1 as a private reply channel before GTK can write anything to it,
+    # then point the real stdout at /dev/null. A stray library message on stdout
+    # would otherwise be read by the daemon as a protocol byte.
+    try:
+        reply_fd = os.dup(1)
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, 1)
+        os.close(devnull)
+    except OSError:
+        return 1
+
+    def reply(byte: bytes) -> None:
+        try:
+            os.write(reply_fd, byte)
+        except OSError:
+            pass
+
     try:
         import gi
         gi.require_version("Gtk", "4.0")
@@ -147,6 +182,7 @@ def run() -> int:
         # paste target will be. new_for_bytes serves the exact bytes — no
         # re-encoding, so a recovered clip stays byte-identical to the original
         # (which also keeps its content hash stable for capture de-dupe).
+        ok = False
         try:
             providers = [
                 Gdk.ContentProvider.new_for_bytes(mime, GLib.Bytes.new(data))
@@ -154,9 +190,12 @@ def run() -> int:
             ]
             provider = (providers[0] if len(providers) == 1
                         else Gdk.ContentProvider.new_union(providers))
-            clipboard.set_content(provider)
+            # set_content reports failure by returning False rather than
+            # raising, so the return value is the only signal there is.
+            ok = bool(clipboard.set_content(provider))
         except Exception:
-            pass
+            ok = False
+        reply(ACK if ok else NACK)
         return False   # one-shot on the GLib main loop
 
     def _reader() -> None:
@@ -175,9 +214,14 @@ def run() -> int:
                 parts = _decode_parts(payload)
             if parts:
                 GLib.idle_add(_apply, parts)
+            else:
+                reply(NACK)     # malformed frame — answer, don't strand the caller
         GLib.idle_add(loop.quit)   # stdin closed -> daemon gone -> exit
 
+    # Announce readiness only once stdin is actually being drained, so the
+    # daemon's next write cannot block against a helper that will never read.
     threading.Thread(target=_reader, daemon=True).start()
+    reply(READY)
     loop.run()
     return 0
 
@@ -186,25 +230,70 @@ def run() -> int:
 # Daemon-side driver (GTK-free; safe to import from the clipboard backend)
 # --------------------------------------------------------------------------- #
 _proc = None                 # the running helper subprocess
-_last = None                 # sha256 of the last frame we published
-_last_frame = None           # that frame, replayed after a respawn
-_published = None            # sha256 hex of the *content* we put on the clipboard
-_lock = threading.Lock()
+_ready = False               # has *this* helper sent its READY byte?
+_last_frame = None           # the last frame we published, replayed after a respawn
+_published: Optional[Set[str]] = None   # sha256 hex of the content we're serving
+_lock = threading.RLock()
 
 
 def _spawn():
     """Launch the helper as an XWayland client, or None when X isn't available."""
+    global _ready
+    _ready = False
     if not os.environ.get("DISPLAY"):
         return None
     env = dict(os.environ)
     env["GDK_BACKEND"] = "x11"
     try:
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             [sys.executable, "-m", "clippy", "_x11clip"],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, env=env, start_new_session=True,
         )
     except OSError:
+        return None
+    debuglog.log("x11.spawn", pid=proc.pid)
+    return proc
+
+
+def _reap(proc) -> None:
+    """Close down a helper we're done with, and actually collect it — a
+    terminate() without a wait() leaves a zombie for every recycle."""
+    if proc is None:
+        return
+    try:
+        if proc.stdin is not None:
+            proc.stdin.close()
+        if proc.stdout is not None:
+            proc.stdout.close()
+        proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=1)
+    except (subprocess.TimeoutExpired, OSError):
+        try:
+            proc.kill()
+            proc.wait(timeout=1)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+
+def _read_reply(proc, timeout: float) -> Optional[bytes]:
+    """One protocol byte from the helper, or None on timeout/EOF/error.
+
+    Reads the raw fd rather than ``proc.stdout.read`` on purpose: a buffered
+    reader may pull the *next* reply into its own buffer, after which ``select``
+    on the fd reports "nothing to read" for a byte we already have."""
+    if proc is None or proc.stdout is None:
+        return None
+    try:
+        fd = proc.stdout.fileno()
+        readable, _, _ = select.select([fd], [], [], timeout)
+        if not readable:
+            return None
+        return os.read(fd, 1) or None
+    except (OSError, ValueError):
         return None
 
 
@@ -220,6 +309,8 @@ def start() -> bool:
     with _lock:
         if _proc is not None and _proc.poll() is None:
             return True
+        if _proc is not None:
+            debuglog.log("x11.helper_died", code=_proc.returncode)
         _proc = _spawn()
         if _proc is None:
             return False
@@ -229,35 +320,60 @@ def start() -> bool:
 
 
 def _send_frame(frame: bytes) -> bool:
-    """Write one framed payload to the helper; respawn once on a broken pipe."""
-    global _proc
-    for _ in (1, 2):   # one respawn-and-retry on a broken pipe
+    """Write one framed payload to the helper and wait for it to be applied.
+
+    Success means the helper answered ACK — i.e. the bytes are the live X11
+    selection — not merely that a write returned. Respawns once when the helper
+    turns out to be dead or never became ready."""
+    global _proc, _ready
+    for _ in (1, 2):   # one respawn-and-retry
         if _proc is None or _proc.poll() is not None:
             _proc = _spawn()
         if _proc is None or _proc.stdin is None:
             return False
+        if not _ready:
+            if _read_reply(_proc, _READY_TIMEOUT) != READY:
+                debuglog.log("x11.not_ready")
+                _reap(_proc)
+                _proc = None
+                continue           # try once with a fresh helper
+            _ready = True
         try:
             _proc.stdin.write(frame)
             _proc.stdin.flush()
-            return True
         except (BrokenPipeError, OSError):
-            _proc = None   # force a respawn on the next attempt
+            _reap(_proc)
+            _proc = None           # force a respawn on the next attempt
+            continue
+        reply = _read_reply(_proc, _ACK_TIMEOUT)
+        if reply == ACK:
+            return True
+        debuglog.log("x11.publish_failed", reply=reply)
+        # NACK, timeout or EOF: this helper is not serving what we asked for.
+        # Recycle it so the next attempt starts clean, and tell the caller so it
+        # can fall back to wl-copy/xclip instead of trusting a phantom selection.
+        _reap(_proc)
+        _proc = None
+        if reply == NACK:
+            return False           # a live helper refused; retrying won't help
     return False
 
 
 def _publish_frame(kind: bytes, payload: bytes) -> bool:
-    """De-dupe on content, then hand the frame to the persistent owner.
+    """Hand one frame to the persistent owner and remember it for replay.
 
-    De-duping breaks the Wayland<->X11 echo the owner would otherwise cause (its
-    X11 grab bounces back through the compositor into ``wl-paste --watch`` and
-    re-enters capture)."""
-    global _last, _last_frame
+    There is deliberately no "same as last time, skip it" short-circuit. A live
+    helper process is not proof that the helper still *owns* the selection —
+    cosmic-comp's XWM steals it back on the next focus into an X11 window — so
+    skipping a repeat publish turned the user's second click on the same tile
+    into a silent no-op, exactly when they were clicking again because the first
+    paste came up empty. Re-sending is one pipe write, and the resulting echo is
+    recognised by content digest in ``release_unless_ours``, so it costs a
+    round trip rather than a loop."""
+    global _last_frame
     frame = kind + struct.pack(">I", len(payload)) + payload
-    digest = hashlib.sha256(frame).digest()
-    if digest == _last and _proc is not None and _proc.poll() is None:
-        return True   # already the live selection — nothing to do
     if _send_frame(frame):
-        _last, _last_frame = digest, frame
+        _last_frame = frame
         return True
     return False
 
@@ -282,19 +398,35 @@ def publish_parts(parts: Sequence[Part]) -> bool:
         return _publish_frame(b"P", _encode_parts(parts))
 
 
-def note_published(digest: str) -> None:
+def note_published(*digests: Optional[str]) -> None:
     """Record the sha256 hex of the content we just put on the clipboard, so a
     capture of our own clip can be told apart from someone else's copy (see
-    ``release_unless_ours``)."""
+    ``release_unless_ours``).
+
+    Takes *several* digests because a clip can come back from the round trip
+    hashed differently than it went out: a rich recover is published as html
+    plus plain text but re-captured (and stored) as the plain flavor alone. Any
+    one of them matching means the capture is our own echo."""
     global _published
+    values = {d for d in digests if d}
+    if not values:
+        return
     with _lock:
-        _published = digest
+        _published = values
 
 
 def published_digest() -> Optional[str]:
-    """The sha256 hex of the content we currently have on the clipboard, or None."""
+    """One sha256 hex of the content we currently have on the clipboard, or
+    None. Prefer ``is_published`` — this exists for callers that only want to
+    know whether anything is held."""
     with _lock:
-        return _published
+        return next(iter(_published)) if _published else None
+
+
+def is_published(digest: Optional[str]) -> bool:
+    """Whether ``digest`` is (one of) the content we are currently serving."""
+    with _lock:
+        return bool(digest and _published and digest in _published)
 
 
 def release_unless_ours(digest: Optional[str]) -> bool:
@@ -308,16 +440,18 @@ def release_unless_ours(digest: Optional[str]) -> bool:
     Content-keyed rather than time-keyed because publishing a clip *is* a
     clipboard change: our own recover comes straight back as a capture, and
     releasing then would immediately undo the recover."""
-    global _proc, _published, _last, _last_frame
+    global _proc, _published, _last_frame
     with _lock:
-        if digest is not None and digest == _published:
+        if is_published(digest):
             return False            # our own echo — keep serving it
-        if _published is None:
-            return False            # we have nothing on the clipboard to give up
+        if _published is None and _last_frame is None:
+            return False            # nothing on the clipboard to give up
         _published = None
-        # Forget the frame too: start()'s replay-after-respawn must not resurrect
-        # a clip that someone else has since replaced.
-        _last = _last_frame = None
+        # Forget the frame too, whether or not we were tracking its content:
+        # start()'s replay-after-respawn must not resurrect a clip that someone
+        # else has since replaced.
+        _last_frame = None
+        debuglog.log("x11.release", digest=(digest or "")[:12])
         # Recycle the helper rather than ask it to clear: GDK has no "disown"
         # call. Gdk.Clipboard.set_content(None) leaves us owning the selection
         # with empty content, which shadows XWayland apps just as badly. An X11
@@ -326,28 +460,16 @@ def release_unless_ours(digest: Optional[str]) -> bool:
         # straight away: it owns nothing until we publish, and its presence keeps
         # Xwayland (which runs with -terminate) from cycling.
         old, _proc = _proc, None
-        if old is not None:
-            try:
-                if old.stdin is not None:
-                    old.stdin.close()
-                old.terminate()
-            except OSError:
-                pass
+        _reap(old)
         _proc = _spawn()
         return True
 
 
 def stop() -> None:
     """Terminate the helper (called on daemon shutdown)."""
-    global _proc, _last, _last_frame
+    global _proc, _last_frame, _published
     with _lock:
-        if _proc is not None:
-            try:
-                if _proc.stdin is not None:
-                    _proc.stdin.close()
-                _proc.terminate()
-            except OSError:
-                pass
+        _reap(_proc)
         _proc = None
-        _last = None
         _last_frame = None
+        _published = None

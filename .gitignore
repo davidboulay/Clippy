@@ -28,3 +28,6 @@ Pasted Image.png
 # stray pasted screenshots
 clippy/image.png
 image.png
+
+# Stray paste/screenshot test artifacts — these once shipped inside the .deb.
+/clippy/*.png

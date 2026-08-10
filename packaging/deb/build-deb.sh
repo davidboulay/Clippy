@@ -18,8 +18,14 @@ SITE="$STAGE/usr/lib/python3/dist-packages"
 mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" "$SITE" \
          "$STAGE/usr/share/applications" "$STAGE/usr/share/doc/$PKG"
 
-# Python package (sans caches)
-cp -r "$REPO/clippy" "$SITE/clippy"
+# Python package (sans caches). Copying the source tree wholesale also picks up
+# whatever a dev happened to leave in it: a batch of stray paste-test PNGs once
+# made the package 2.1 MB, of which 2.0 MB was junk shipped to every user. So
+# take the sources and the icons deliberately, and nothing else.
+mkdir -p "$SITE/clippy"
+find "$REPO/clippy" -maxdepth 1 -name '*.py' -exec cp {} "$SITE/clippy/" \;
+cp -r "$REPO/clippy/backends" "$SITE/clippy/backends"
+cp -r "$REPO/clippy/icons" "$SITE/clippy/icons"
 find "$SITE/clippy" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$SITE/clippy" -name '*.pyc' -delete 2>/dev/null || true
 
