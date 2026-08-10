@@ -107,6 +107,16 @@ print("4b. attempt cap burns the code after repeated wrong guesses")
 assert A.trusted[B.device_id].get("proto") == sync._PAIR_PROTO, A.trusted[B.device_id]
 print("4c. new trust is tagged with the pairing protocol version")
 
+# 4c-bis. Unpair must NOT wipe mDNS discovery, or an immediate re-pair fails
+# with "no devices found on the LAN".
+B._peers_online[A.device_id] = ("127.0.0.1", 48001, "A")   # ensure discovered
+assert B.unpair(A.device_id) is True
+assert A.device_id in B._peers_online, "unpair wiped discovery — re-pair would fail"
+A.enter_pairing()
+res2 = B.join_pairing(A.enter_pairing() if False else A._pairing["code"])
+assert res2.get("ok") and A.device_id in B.trusted, res2
+print("4c-bis. unpair keeps discovery; immediate re-pair succeeds")
+
 # 4d. Live reachability: A pings B (both listening) -> B is reported online with
 # a last_seen, and the status carries a last_check timestamp.
 A._last_seen.clear(); A._last_check = 0

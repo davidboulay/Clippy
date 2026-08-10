@@ -353,9 +353,17 @@ class SyncEngine:
         return _fp_of(self.pubkey_hex)
 
     def unpair(self, peer_id: str) -> bool:
-        """Forget a paired device (drops trust + any live discovery entry)."""
+        """Forget a paired device (drops trust). Discovery is left alone.
+
+        Popping the peer from _peers_online here broke re-pairing: join_pairing
+        finds the other device through mDNS discovery (_peers_online), so wiping
+        the entry on unpair meant an immediate "pair again" failed with "no
+        devices found on the LAN" until mDNS happened to re-announce. Discovery
+        is independent of trust — the status list already shows only trusted
+        peers, so an unpaired device won't appear as online regardless — so this
+        no longer touches it, and the device stays pairable straight away."""
         removed = self.trusted.pop(peer_id, None) is not None
-        self._peers_online.pop(peer_id, None)
+        self._last_seen.pop(peer_id, None)
         if removed:
             self._save_peers()
         return removed
@@ -1155,7 +1163,15 @@ class SyncEngine:
         code = code.strip()
         if host:
             return self._pair_client(host, config.SYNC_PORT, code)
+        # Discovery can lag a click — a peer that just started, or a network
+        # where the first mDNS answer hasn't arrived. Rather than fail instantly
+        # with "no devices found", wait briefly for the browser to populate.
         peers = list(self._peers_online.items())
+        for _ in range(20):          # up to ~4s
+            if peers:
+                break
+            time.sleep(0.2)
+            peers = list(self._peers_online.items())
         if not peers:
             return {"ok": False,
                     "error": "no devices found on the LAN (mDNS may be blocked — "
