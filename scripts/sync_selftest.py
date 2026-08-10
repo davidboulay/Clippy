@@ -48,7 +48,11 @@ B._peers_online.setdefault(A.device_id, ("127.0.0.1", 48001, "A"))
 code = A.enter_pairing()
 res = B.join_pairing(code)
 assert res.get("ok") and A.device_id in B.trusted and B.device_id in A.trusted, res
-print(f"3. paired mutually with code {code}")
+# The bulb should be green immediately after pairing (we just had a live
+# handshake), not grey until the next liveness sweep.
+assert next(p for p in A.status()["peers"] if p["id"] == B.device_id)["online"]
+assert next(p for p in B.status()["peers"] if p["id"] == A.device_id)["online"]
+print(f"3. paired mutually with code {code} (both show online immediately)")
 
 A.enter_pairing()
 assert not B._pair_client("127.0.0.1", 48001, "000000").get("ok")
@@ -101,6 +105,65 @@ assert A._pairing is None, "pairing window not closed after the attempt cap"
 # And the burned code can no longer be used, even with the RIGHT code.
 assert not B._pair_client("127.0.0.1", 48001, "111111").get("ok")
 print("4b. attempt cap burns the code after repeated wrong guesses")
+
+# 4c. New pairings are tagged with the protocol version (so a future upgrade can
+# tell securely-paired trust apart).
+assert A.trusted[B.device_id].get("proto") == sync._PAIR_PROTO, A.trusted[B.device_id]
+print("4c. new trust is tagged with the pairing protocol version")
+
+# 4c-bis. Unpair is mutual (the other side is told and drops trust too), and it
+# must NOT wipe mDNS discovery, or an immediate re-pair fails with "no devices
+# found on the LAN".
+A._peers_online[B.device_id] = ("127.0.0.1", 48002, "B")   # so B can be notified
+B._peers_online[A.device_id] = ("127.0.0.1", 48001, "A")   # ensure discovered
+assert A.device_id in B.trusted and B.device_id in A.trusted
+assert B.unpair(A.device_id) is True
+# B told A; A should drop B shortly (notice is sent on a background thread).
+for _ in range(50):
+    if B.device_id not in A.trusted:
+        break
+    time.sleep(0.1)
+assert B.device_id not in A.trusted, "unpair was not mutual — A still trusts B"
+assert A.device_id in B._peers_online, "unpair wiped discovery — re-pair would fail"
+A.enter_pairing()
+res2 = B.join_pairing(A._pairing["code"])
+assert res2.get("ok") and A.device_id in B.trusted, res2
+print("4c-bis. unpair is mutual, keeps discovery, and re-pair succeeds")
+
+# 4d. Live reachability: A pings B (both listening) -> B is reported online with
+# a last_seen, and the status carries a last_check timestamp.
+A._last_seen.clear(); A._last_check = 0
+assert A._ping_peer(B.device_id, A.trusted[B.device_id]) is True, "peer did not answer ping"
+A._last_seen[B.device_id] = time.time(); A._last_check = time.time()
+st_a = A.status()
+bp = next(p for p in st_a["peers"] if p["id"] == B.device_id)
+assert bp["online"] is True and bp["last_seen"], bp
+assert st_a["last_check"], "no last_check in status"
+# An unreachable peer is reported offline.
+A._last_seen.clear(); A._last_check = time.time()
+assert next(p for p in A.status()["peers"] if p["id"] == B.device_id)["online"] is False
+print("4d. liveness ping drives online status + last_check")
+
+# 4e. Migration: a peer stored WITHOUT a proto marker (paired under the old,
+# bypassable handshake) loads as stale — disabled for sync, surfaced for re-pair.
+import json as _json
+mig_dir = tempfile.mkdtemp()
+Cmig = sync.SyncEngine(port=48009, state_dir=mig_dir)
+Cmig._peers_path.write_text(_json.dumps({
+    "oldpeer1234": {"name": "Legacy Mac", "pubkey": "ab" * 32, "addr": "10.0.0.9"},
+    "newpeer5678": {"name": "New Box", "pubkey": "cd" * 32, "addr": "10.0.0.8",
+                    "proto": sync._PAIR_PROTO},
+}))
+Cmig.trusted, Cmig.stale_peers = Cmig._load_peers()
+assert "newpeer5678" in Cmig.trusted and "oldpeer1234" not in Cmig.trusted, Cmig.trusted
+assert "oldpeer1234" in Cmig.stale_peers, Cmig.stale_peers
+assert [s["name"] for s in Cmig.status()["stale"]] == ["Legacy Mac"]
+# The stale peer is NOT a sync target (trusted-only), and persists across save.
+Cmig._save_peers()
+reloaded = _json.loads(Cmig._peers_path.read_text())
+assert "oldpeer1234" in reloaded, "stale entry lost on save (would stop prompting)"
+print("4e. pre-fix pairings load as stale (disabled + surfaced for re-pair)")
+import shutil as _sh; _sh.rmtree(mig_dir, ignore_errors=True)
 
 # Encrypted broadcast B -> A, with the clipboard/storage stubbed
 got = []

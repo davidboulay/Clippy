@@ -69,6 +69,13 @@ _PAIR_MAX_ATTEMPTS = 5       # failed guesses before the code is burned
 _CONN_TIMEOUT = 5
 _MAX_PAIR_MSG = 4096         # pre-auth frames (pair_*) are tiny; cap hard
 _MAX_CONN = 16              # concurrent inbound connections; excess is dropped
+# Liveness. "Online" used to mean only "mDNS currently advertises this peer",
+# which is push-based and can lag reality (a crashed peer stays advertised until
+# its record ages out). Instead we actively reach out on a timer and remember
+# when each peer last answered, so the status bulb reflects real reachability and
+# the UI can say when it was last confirmed.
+_LIVENESS_INTERVAL = 15     # seconds between reachability sweeps
+_LIVENESS_WINDOW = 40       # a peer is "online" if it answered within this many s
 _SEEN_MAX = 256
 _SEEN_TTL = 30               # seconds a hash stays "seen". Long enough to absorb
                              # the sync echo (a peer injects a received clip into
@@ -261,7 +268,14 @@ class SyncEngine:
         self.device_id = self._load_device_id()
         self._priv = self._load_identity()
         self.pubkey_hex = bytes(self._priv.public_key).hex() if self._priv else ""
-        self.trusted = self._load_peers()             # id -> {name, pubkey}
+        # trusted: peers paired under the current (SPAKE2) protocol, usable for
+        # sync. stale: peers paired under the old handshake that had the auth
+        # bypass — their trust was established insecurely, so it is disabled and
+        # the user is asked to re-pair. See _load_peers.
+        self.trusted, self.stale_peers = self._load_peers()
+        self._last_seen: Dict[str, float] = {}        # id -> monotonic-ish last reply
+        self._last_check = 0.0                         # wall time of the last sweep
+        self._live_thread = None
 
     # -- identity / peers ------------------------------------------------
     def device_name(self) -> str:
@@ -288,14 +302,48 @@ class SyncEngine:
         os.chmod(p, 0o600)
         return priv
 
-    def _load_peers(self) -> Dict[str, dict]:
+    def _load_peers(self):
+        """Return (trusted, stale). A stored peer counts as trusted only if it
+        was paired under the current pairing protocol (``proto >= _PAIR_PROTO``).
+
+        Anything older was paired by the pre-SPAKE2 handshake, whose code check
+        could be bypassed — so that trust was never securely established. Rather
+        than silently keep using it (which would carry the vulnerability's
+        consequences past the fix) or silently delete it (sync just stops, with
+        no explanation), it is set aside as ``stale``: disabled for sync, but
+        remembered so the UI can ask the user to re-pair that device once."""
+        raw = self._load_peers_raw()
+        trusted, stale = {}, {}
+        for pid, entry in raw.items():
+            if isinstance(entry, dict) and int(entry.get("proto", 1)) >= _PAIR_PROTO:
+                trusted[pid] = entry
+            else:
+                stale[pid] = entry
+        if stale:
+            _log(f"pairing: {len(stale)} device(s) paired before the security "
+                 f"update are disabled pending re-pair: "
+                 f"{', '.join(e.get('name', i) for i, e in stale.items())}")
+        return trusted, stale
+
+    def _load_peers_raw(self) -> Dict[str, dict]:
         try:
             return json.loads(self._peers_path.read_text())
         except (OSError, ValueError):
             return {}
 
     def _save_peers(self) -> None:
-        self._peers_path.write_text(json.dumps(self.trusted, indent=2))
+        # Persist stale (not-yet-re-paired) entries alongside trusted ones, so
+        # the "re-pair required" prompt survives restarts until the user acts.
+        # trusted wins on any id collision (a completed re-pair supersedes the
+        # stale record). Written 0600 like the identity key beside it.
+        combined = dict(self.stale_peers)
+        combined.update(self.trusted)
+        fd = os.open(str(self._peers_path),
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, json.dumps(combined, indent=2).encode("utf-8"))
+        finally:
+            os.close(fd)
         try:
             os.chmod(self._peers_path, 0o600)
         except OSError:
@@ -305,12 +353,44 @@ class SyncEngine:
         return _fp_of(self.pubkey_hex)
 
     def unpair(self, peer_id: str) -> bool:
-        """Forget a paired device (drops trust + any live discovery entry)."""
+        """Forget a paired device (drops trust). Discovery is left alone.
+
+        Popping the peer from _peers_online here broke re-pairing: join_pairing
+        finds the other device through mDNS discovery (_peers_online), so wiping
+        the entry on unpair meant an immediate "pair again" failed with "no
+        devices found on the LAN" until mDNS happened to re-announce. Discovery
+        is independent of trust — the status list already shows only trusted
+        peers, so an unpaired device won't appear as online regardless — so this
+        no longer touches it, and the device stays pairable straight away."""
+        peer = self.trusted.get(peer_id)
         removed = self.trusted.pop(peer_id, None) is not None
-        self._peers_online.pop(peer_id, None)
+        self._last_seen.pop(peer_id, None)
         if removed:
             self._save_peers()
+            # Tell the other device, so unpair is mutual. Best-effort: if it's
+            # offline it simply keeps the (now one-sided) trust until it next
+            # hears from us or is unpaired there too.
+            if peer:
+                threading.Thread(target=self._send_unpair, args=(peer_id, peer),
+                                 daemon=True).start()
         return removed
+
+    def _send_unpair(self, peer_id: str, peer: dict) -> None:
+        """Send an authenticated 'I unpaired you' notice to a former peer."""
+        try:
+            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
+            payload = json.dumps({"kind": "unpair"}).encode("utf-8")
+            frame = {"type": "sync", "from": self.device_id,
+                     "box": bytes(box.encrypt(payload)).hex()}
+        except Exception:
+            return
+        for ip, port in self._peer_addrs(peer_id, peer):
+            try:
+                with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
+                    _send_frame(s, frame)
+                return
+            except OSError:
+                continue
 
     def _adopt_peer_id(self, fp: str, new_id: str) -> Optional[dict]:
         """Reconcile a trusted peer onto its current ``device_id``.
@@ -406,6 +486,8 @@ class SyncEngine:
         self._running = True
         self._server = self._bind_listener()
         threading.Thread(target=self._serve, daemon=True).start()
+        self._live_thread = threading.Thread(target=self._liveness_loop, daemon=True)
+        self._live_thread.start()
         self._advertise()
 
     def stop(self) -> None:
@@ -579,6 +661,11 @@ class SyncEngine:
                 kind = frame.get("type")
                 if kind == "pair_hello":
                     self._handle_pair_server(conn, frame)
+                elif kind == "ping":
+                    # Liveness probe. Reply with our id (already public via
+                    # mDNS), so a peer can confirm we're reachable. No trust or
+                    # clipboard data is exposed.
+                    _send_frame(conn, {"type": "pong", "id": self.device_id})
                 elif kind == "sync":
                     self._handle_sync(frame)
                 elif kind == "media":
@@ -589,14 +676,30 @@ class SyncEngine:
 
     # -- sync transport --------------------------------------------------
     def _handle_sync(self, frame: dict) -> None:
-        _sender, _peer, clear = self._open_frame(frame)
+        sender, _peer, clear = self._open_frame(frame)
         if clear is None:
             return  # not paired / undecryptable -> reject
         try:
             env = json.loads(clear.decode("utf-8"))
         except Exception:
             return
+        if env.get("kind") == "unpair":
+            # The peer unpaired us. The frame decrypted against their key, so
+            # this is authenticated — drop them from our trust too, so unpair is
+            # mutual (otherwise our side keeps showing them paired and green).
+            self._drop_trust(sender)
+            return
         self.on_receive(env)
+
+    def _drop_trust(self, peer_id) -> None:
+        if peer_id and self.trusted.pop(peer_id, None) is not None:
+            self._last_seen.pop(peer_id, None)
+            self._save_peers()
+            if self._on_status:
+                try:
+                    self._on_status()
+                except Exception:
+                    pass
 
     def on_receive(self, env: dict) -> None:
         if env.get("origin") == self.device_id:
@@ -925,6 +1028,50 @@ class SyncEngine:
             while len(self._seen) > _SEEN_MAX:
                 self._seen.popitem(last=False)
 
+    def _clear_stale(self, pid: str, pubkey: str) -> None:
+        """Drop a stale (pre-fix) record once its device is re-paired — matched
+        by id or by identity key, since a re-pair may arrive under a new id."""
+        for sid in [s for s, e in self.stale_peers.items()
+                    if s == pid or e.get("pubkey") == pubkey]:
+            self.stale_peers.pop(sid, None)
+
+    # -- liveness --------------------------------------------------------
+    def _liveness_loop(self) -> None:
+        """Periodically confirm each trusted peer is actually reachable.
+
+        Records when each last answered so ``status`` can report real
+        reachability (green when a peer replied within _LIVENESS_WINDOW) and the
+        UI can show when the check last ran, instead of trusting mDNS presence
+        which lags a peer that dropped off without a goodbye."""
+        while self._running:
+            for pid, peer in list(self.trusted.items()):
+                if self._ping_peer(pid, peer):
+                    self._last_seen[pid] = time.time()
+            self._last_check = time.time()
+            if self._on_status:
+                try:
+                    self._on_status()
+                except Exception:
+                    pass
+            for _ in range(_LIVENESS_INTERVAL * 2):
+                if not self._running:
+                    return
+                time.sleep(0.5)
+
+    def _ping_peer(self, pid: str, peer: dict) -> bool:
+        """True if the peer answered a ping on any of its candidate addresses."""
+        for ip, port in self._peer_addrs(pid, peer):
+            try:
+                with socket.create_connection((ip, port), timeout=2) as s:
+                    s.settimeout(2)
+                    _send_frame(s, {"type": "ping", "id": self.device_id})
+                    reply = _recv_frame(s, limit=_MAX_PAIR_MSG)
+                if reply and reply.get("type") == "pong":
+                    return True
+            except OSError:
+                continue
+        return False
+
     # -- pairing ---------------------------------------------------------
     #
     # Both devices run SPAKE2 keyed by the shown code. SPAKE2 turns the shared
@@ -1037,8 +1184,16 @@ class SyncEngine:
         except OSError:
             peer_ip = None
         # Remember the peer's address so we can sync to it even if mDNS never
-        # discovers it (multicast-blocked networks / multi-homed hosts).
-        self.trusted[id_b] = {"name": name_b, "pubkey": pk_b, "addr": peer_ip}
+        # discovers it (multicast-blocked networks / multi-homed hosts). Tag the
+        # entry with the pairing protocol version so a future upgrade can tell
+        # securely-paired trust from the old kind.
+        self.trusted[id_b] = {"name": name_b, "pubkey": pk_b, "addr": peer_ip,
+                              "proto": _PAIR_PROTO}
+        self._clear_stale(id_b, pk_b)
+        # We just completed a live handshake with this peer, so it is reachable
+        # right now — mark it seen so the status bulb goes green immediately
+        # instead of waiting up to a full liveness interval for the next sweep.
+        self._last_seen[id_b] = time.time()
         self._save_peers()
         with self._pair_lock:
             self._pairing = None
@@ -1052,7 +1207,15 @@ class SyncEngine:
         code = code.strip()
         if host:
             return self._pair_client(host, config.SYNC_PORT, code)
+        # Discovery can lag a click — a peer that just started, or a network
+        # where the first mDNS answer hasn't arrived. Rather than fail instantly
+        # with "no devices found", wait briefly for the browser to populate.
         peers = list(self._peers_online.items())
+        for _ in range(20):          # up to ~4s
+            if peers:
+                break
+            time.sleep(0.2)
+            peers = list(self._peers_online.items())
         if not peers:
             return {"ok": False,
                     "error": "no devices found on the LAN (mDNS may be blocked — "
@@ -1102,7 +1265,12 @@ class SyncEngine:
                 if not done or done.get("type") != "paired":
                     return {"ok": False, "error": (done or {}).get("reason", "peer rejected")}
                 self.trusted[ack["id"]] = {"name": ack.get("name", ack["id"]),
-                                           "pubkey": pk_a, "addr": ip}
+                                           "pubkey": pk_a, "addr": ip,
+                                           "proto": _PAIR_PROTO}
+                self._clear_stale(ack["id"], pk_a)
+                # Reachable right now (we just paired over a live socket) — mark
+                # seen so the bulb is green immediately, not after the next sweep.
+                self._last_seen[ack["id"]] = time.time()
                 self._save_peers()
                 if self._on_status:
                     self._on_status()
@@ -1112,12 +1280,32 @@ class SyncEngine:
 
     # -- status ----------------------------------------------------------
     def status(self) -> dict:
+        now = time.time()
         peers = []
         for pid, info in self.trusted.items():
+            seen = self._last_seen.get(pid, 0)
             peers.append({
                 "id": pid, "name": info.get("name", pid),
-                "online": pid in self._peers_online,
+                # Online = answered a liveness ping within the window. Falls back
+                # to mDNS presence before the first sweep completes, so a freshly
+                # started peer isn't shown offline for the first interval.
+                "online": (now - seen) < _LIVENESS_WINDOW
+                          or (self._last_check == 0 and pid in self._peers_online),
+                "last_seen": seen or None,
             })
         return {"device": self.device_name(), "id": self.device_id,
                 "fingerprint": self.fingerprint(), "peers": peers,
-                "discovered": len(self._peers_online)}
+                "discovered": len(self._peers_online),
+                "last_check": self._last_check or None,
+                # Devices paired before the security update, awaiting re-pair.
+                "stale": [{"id": i, "name": e.get("name", i)}
+                          for i, e in self.stale_peers.items()]}
+
+    def forget_stale(self, pid: str) -> bool:
+        """Drop a stale peer the user chooses not to re-pair (a normal unpair)."""
+        if self.stale_peers.pop(pid, None) is not None:
+            self._save_peers()
+            if self._on_status:
+                self._on_status()
+            return True
+        return False
