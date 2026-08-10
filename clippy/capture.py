@@ -26,19 +26,48 @@ _MAX_FILES = 25
 
 
 def _should_play_sound(entry_id: int) -> bool:
+    import fcntl
+    import os
     import time
+
     now = time.time()
+    # Read, decide and write under one lock. Each _store is its own process and
+    # a copy plus its echo arrive tens of milliseconds apart, so without this
+    # the two interleave: both read the old state, both decide to play, and the
+    # copy sound doubles — the exact bug the debounce was added to fix.
+    lock_path = _SOUND_STATE.with_suffix(".lock")
+    fd = None
     try:
-        last_id, last_t = _SOUND_STATE.read_text().split()
-        if int(last_id) == entry_id and now - float(last_t) < _SOUND_DEBOUNCE:
-            return False  # an echo bounce (or sync round-trip) — stay silent
-    except (OSError, ValueError):
-        pass
-    try:
-        _SOUND_STATE.write_text(f"{entry_id} {now}")
+        # Both the lock and the state file live in DATA_DIR; if it doesn't exist
+        # yet, every write here fails and is swallowed, so the debounce silently
+        # never engages and the copy sound doubles on every echo.
+        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
     except OSError:
-        pass
-    return True
+        fd = None           # no lock available — fall through unserialized
+    try:
+        try:
+            last_id, last_t = _SOUND_STATE.read_text().split()
+            if int(last_id) == entry_id and now - float(last_t) < _SOUND_DEBOUNCE:
+                return False  # an echo bounce (or sync round-trip) — stay silent
+        except (OSError, ValueError):
+            pass
+        try:
+            # Write-then-rename, so a reader never sees a half-written record.
+            tmp = _SOUND_STATE.with_suffix(".tmp")
+            tmp.write_text(f"{entry_id} {now}")
+            os.replace(tmp, _SOUND_STATE)
+        except OSError:
+            pass
+        return True
+    finally:
+        if fd is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
+            except OSError:
+                pass
 
 
 # Magic bytes per image type. Reading our own clip back through data-control can
