@@ -1,17 +1,42 @@
-# Clippy
+<div align="center">
 
-A clipboard-history panel for **Linux and macOS**. Press a global shortcut and a
-strip of tiles slides up from the bottom of the screen showing everything you've
-recently copied — text, images, and files. Click a tile (or press <kbd>Enter</kbd>)
-to load it back onto the clipboard.
+<img src="docs/clippy.svg" alt="" width="104" height="104">
 
-Clippy stays out of your way — a **paperclip in the menubar / system tray**,
-never in the dock — and adds **end-to-end-encrypted LAN sync** so your clipboard
-follows you between machines, even across operating systems.
+<h1>Clippy</h1>
 
-| Linux (Wayland / COSMIC) | macOS |
-|---|---|
-| ![Clippy on Linux](docs/screenshot-cosmic.png) | ![Clippy on macOS](docs/screenshot-macos.png) |
+**Clipboard history for Linux and macOS** — everything you've copied, one shortcut away,<br>
+with end-to-end-encrypted sync between your machines.
+
+[![Release](https://img.shields.io/github/v/release/davidboulay/Clippy?style=flat-square&color=E34FE1&labelColor=1c1c1e)](https://github.com/davidboulay/Clippy/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/davidboulay/Clippy/ci.yml?branch=main&style=flat-square&label=tests&labelColor=1c1c1e)](https://github.com/davidboulay/Clippy/actions/workflows/ci.yml)
+[![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS-FC6F8C?style=flat-square&labelColor=1c1c1e&label=runs%20on)](#get-clippy)
+[![License](https://img.shields.io/github/license/davidboulay/Clippy?style=flat-square&color=6b7280&labelColor=1c1c1e)](LICENSE)
+
+[**Install**](#get-clippy) · [Features](#features) · [Shortcuts](#using-the-panel) · [Device sync](#cross-device-clipboard-sync) · [Troubleshooting](#when-a-clip-wont-paste) · [Security](SECURITY.md)
+
+</div>
+
+<br>
+
+Press a global shortcut and a strip of tiles slides up from the bottom of the
+screen showing everything you've recently copied — text, images, and files.
+Click a tile, or press <kbd>Enter</kbd>, to load it back onto the clipboard.
+
+It stays out of your way: a **paperclip in the menubar or system tray**, never in
+the dock. And because the same history engine runs on both platforms, an
+**end-to-end-encrypted LAN sync** keeps your clipboard with you as you move
+between machines — including between Linux and macOS.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshot-cosmic.png" alt="Clippy on Linux, showing the tile strip over a COSMIC desktop"></td>
+<td width="50%"><img src="docs/screenshot-macos.png" alt="Clippy on macOS, showing the tile strip with source-app icons"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Linux</b> · Wayland / COSMIC</sub></td>
+<td align="center"><sub><b>macOS</b> · menubar app</sub></td>
+</tr>
+</table>
 
 ## Features
 
