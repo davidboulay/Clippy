@@ -1150,6 +1150,10 @@ class SyncEngine:
         self.trusted[id_b] = {"name": name_b, "pubkey": pk_b, "addr": peer_ip,
                               "proto": _PAIR_PROTO}
         self._clear_stale(id_b, pk_b)
+        # We just completed a live handshake with this peer, so it is reachable
+        # right now — mark it seen so the status bulb goes green immediately
+        # instead of waiting up to a full liveness interval for the next sweep.
+        self._last_seen[id_b] = time.time()
         self._save_peers()
         with self._pair_lock:
             self._pairing = None
@@ -1224,6 +1228,9 @@ class SyncEngine:
                                            "pubkey": pk_a, "addr": ip,
                                            "proto": _PAIR_PROTO}
                 self._clear_stale(ack["id"], pk_a)
+                # Reachable right now (we just paired over a live socket) — mark
+                # seen so the bulb is green immediately, not after the next sweep.
+                self._last_seen[ack["id"]] = time.time()
                 self._save_peers()
                 if self._on_status:
                     self._on_status()

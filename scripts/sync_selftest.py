@@ -48,7 +48,11 @@ B._peers_online.setdefault(A.device_id, ("127.0.0.1", 48001, "A"))
 code = A.enter_pairing()
 res = B.join_pairing(code)
 assert res.get("ok") and A.device_id in B.trusted and B.device_id in A.trusted, res
-print(f"3. paired mutually with code {code}")
+# The bulb should be green immediately after pairing (we just had a live
+# handshake), not grey until the next liveness sweep.
+assert next(p for p in A.status()["peers"] if p["id"] == B.device_id)["online"]
+assert next(p for p in B.status()["peers"] if p["id"] == A.device_id)["online"]
+print(f"3. paired mutually with code {code} (both show online immediately)")
 
 A.enter_pairing()
 assert not B._pair_client("127.0.0.1", 48001, "000000").get("ok")
