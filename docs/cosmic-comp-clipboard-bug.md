@@ -1,8 +1,17 @@
-# Clipboard corruption: X11 → Wayland selection transfers ≥ 256 KB gain a 4-byte length prefix
+# Clipboard corruption: X11 → Wayland selection transfers ≥ 256 KiB gain a 4-byte length prefix
 
-Draft bug report for [pop-os/cosmic-comp](https://github.com/pop-os/cosmic-comp).
+**Filed upstream as
+[pop-os/cosmic-comp#2717](https://github.com/pop-os/cosmic-comp/issues/2717).**
+This file is the working analysis behind that report; the issue is the canonical
+place for any follow-up.
+
 Reproducer: `scripts/cosmic_proxy_corruption_repro.py` in this repo (no Clippy
 dependency — a GTK 4 X11 client and `wl-paste` are all it needs).
+
+Clippy works around this by writing the Wayland selection itself in
+`backends/wayland.py::copy_image` instead of relying on the compositor to
+re-export what the X11 owner is serving. If the upstream fix lands, that
+workaround stays harmless but stops being load-bearing.
 
 ## Summary
 
