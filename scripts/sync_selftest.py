@@ -102,6 +102,46 @@ assert A._pairing is None, "pairing window not closed after the attempt cap"
 assert not B._pair_client("127.0.0.1", 48001, "111111").get("ok")
 print("4b. attempt cap burns the code after repeated wrong guesses")
 
+# 4c. New pairings are tagged with the protocol version (so a future upgrade can
+# tell securely-paired trust apart).
+assert A.trusted[B.device_id].get("proto") == sync._PAIR_PROTO, A.trusted[B.device_id]
+print("4c. new trust is tagged with the pairing protocol version")
+
+# 4d. Live reachability: A pings B (both listening) -> B is reported online with
+# a last_seen, and the status carries a last_check timestamp.
+A._last_seen.clear(); A._last_check = 0
+assert A._ping_peer(B.device_id, A.trusted[B.device_id]) is True, "peer did not answer ping"
+A._last_seen[B.device_id] = time.time(); A._last_check = time.time()
+st_a = A.status()
+bp = next(p for p in st_a["peers"] if p["id"] == B.device_id)
+assert bp["online"] is True and bp["last_seen"], bp
+assert st_a["last_check"], "no last_check in status"
+# An unreachable peer is reported offline.
+A._last_seen.clear(); A._last_check = time.time()
+assert next(p for p in A.status()["peers"] if p["id"] == B.device_id)["online"] is False
+print("4d. liveness ping drives online status + last_check")
+
+# 4e. Migration: a peer stored WITHOUT a proto marker (paired under the old,
+# bypassable handshake) loads as stale — disabled for sync, surfaced for re-pair.
+import json as _json
+mig_dir = tempfile.mkdtemp()
+Cmig = sync.SyncEngine(port=48009, state_dir=mig_dir)
+Cmig._peers_path.write_text(_json.dumps({
+    "oldpeer1234": {"name": "Legacy Mac", "pubkey": "ab" * 32, "addr": "10.0.0.9"},
+    "newpeer5678": {"name": "New Box", "pubkey": "cd" * 32, "addr": "10.0.0.8",
+                    "proto": sync._PAIR_PROTO},
+}))
+Cmig.trusted, Cmig.stale_peers = Cmig._load_peers()
+assert "newpeer5678" in Cmig.trusted and "oldpeer1234" not in Cmig.trusted, Cmig.trusted
+assert "oldpeer1234" in Cmig.stale_peers, Cmig.stale_peers
+assert [s["name"] for s in Cmig.status()["stale"]] == ["Legacy Mac"]
+# The stale peer is NOT a sync target (trusted-only), and persists across save.
+Cmig._save_peers()
+reloaded = _json.loads(Cmig._peers_path.read_text())
+assert "oldpeer1234" in reloaded, "stale entry lost on save (would stop prompting)"
+print("4e. pre-fix pairings load as stale (disabled + surfaced for re-pair)")
+import shutil as _sh; _sh.rmtree(mig_dir, ignore_errors=True)
+
 # Encrypted broadcast B -> A, with the clipboard/storage stubbed
 got = []
 st.add_text = lambda text, mime="text/plain", html=None: got.append(text) or 1

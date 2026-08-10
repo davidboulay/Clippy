@@ -150,6 +150,8 @@ class SettingsWindow:
         # rebuilt by _refresh_peers().
         self._peers_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         body.pack_start(self._peers_box, False, False, 0)
+        self._sync_check_lbl = note("")
+        self._sync_check_lbl.get_style_context().add_class("settings-desc")
         self._refresh_peers()
 
     def _on_sync_size(self, combo):
@@ -192,14 +194,21 @@ class SettingsWindow:
         self._refresh_peers()
         return False
 
+    # Bulb colours: green = reachable now, grey = not. Chosen to read on both
+    # light and dark; they don't depend on the theme accent.
+    _DOT_ONLINE = "#3fb950"
+    _DOT_OFFLINE = "#8b949e"
+
     def _refresh_peers(self):
         engine = getattr(self._controller, "sync", None)
         if engine is None or not hasattr(self, "_peers_box"):
             return
         for child in self._peers_box.get_children():
             self._peers_box.remove(child)
-        peers = engine.status().get("peers", [])
-        if not peers:
+        status = engine.status()
+        peers = status.get("peers", [])
+        stale = status.get("stale", [])
+        if not peers and not stale:
             empty = Gtk.Label(label="No paired devices yet.")
             empty.set_xalign(0.0)
             empty.get_style_context().add_class("settings-desc")
@@ -207,12 +216,37 @@ class SettingsWindow:
         else:
             for p in peers:
                 self._peers_box.pack_start(self._peer_row(engine, p), False, False, 0)
+            for s in stale:
+                self._peers_box.pack_start(self._stale_row(engine, s), False, False, 0)
+        # "Last checked" line, so the bulb's freshness is legible rather than
+        # implied. Only meaningful once a sweep has run and a peer exists.
+        if hasattr(self, "_sync_check_lbl"):
+            import time
+            lc = status.get("last_check")
+            if peers and lc:
+                ago = max(0, int(time.time() - lc))
+                self._sync_check_lbl.set_text(
+                    "Checked just now" if ago < 2 else f"Checked {ago}s ago")
+            else:
+                self._sync_check_lbl.set_text("")
         self._peers_box.show_all()
 
     def _peer_row(self, engine, peer):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        dot = Gtk.Label(label="●" if peer["online"] else "○")
-        dot.set_tooltip_text("Online" if peer["online"] else "Offline")
+        online = peer["online"]
+        dot = Gtk.Label()
+        dot.set_markup(
+            f"<span foreground='{self._DOT_ONLINE if online else self._DOT_OFFLINE}'"
+            f" size='large'>●</span>")
+        import time
+        seen = peer.get("last_seen")
+        if online:
+            tip = "Connected"
+        elif seen:
+            tip = f"Last reachable {int(time.time() - seen)}s ago"
+        else:
+            tip = "Not reachable"
+        dot.set_tooltip_text(tip)
         row.pack_start(dot, False, False, 0)
         name = Gtk.Label(label=peer["name"])
         name.set_xalign(0.0)
@@ -222,6 +256,26 @@ class SettingsWindow:
         unpair.get_style_context().add_class("danger")
         unpair.connect("clicked", self._on_unpair, peer)
         row.pack_end(unpair, False, False, 0)
+        return row
+
+    def _stale_row(self, engine, stale):
+        """A device paired before the security update: disabled, needs re-pair."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        warn = Gtk.Label()
+        warn.set_markup("<span foreground='#d29922' size='large'>⚠</span>")
+        warn.set_tooltip_text("Paired before the security update — re-pair to sync")
+        row.pack_start(warn, False, False, 0)
+        name = Gtk.Label()
+        name.set_markup(f"{GLib.markup_escape_text(stale['name'])}  "
+                        f"<i>re-pair required</i>")
+        name.set_xalign(0.0)
+        name.get_style_context().add_class("settings-label")
+        row.pack_start(name, True, True, 0)
+        remove = Gtk.Button(label="Remove")
+        remove.get_style_context().add_class("danger")
+        remove.connect("clicked", lambda _b: (engine.forget_stale(stale["id"]),
+                                              self._refresh_peers()))
+        row.pack_end(remove, False, False, 0)
         return row
 
     def _on_unpair(self, _btn, peer):
@@ -630,6 +684,21 @@ class SettingsWindow:
         self._sc_btn.set_label(self._current_combo_text())
         self.window.show_all()
         self.window.present()
+        # Live-refresh the peer bulbs + "checked Ns ago" while the window is open,
+        # so status reflects the background liveness sweeps. Cancelled on hide.
+        if getattr(self, "_sync_timer", None) is None and hasattr(self, "_peers_box"):
+            self._refresh_peers()
+            self._sync_timer = GLib.timeout_add_seconds(2, self._sync_tick)
+
+    def _sync_tick(self):
+        if not self.window.get_visible():
+            self._sync_timer = None
+            return False
+        self._refresh_peers()
+        return True
 
     def hide(self):
+        if getattr(self, "_sync_timer", None) is not None:
+            GLib.source_remove(self._sync_timer)
+            self._sync_timer = None
         self.window.hide()

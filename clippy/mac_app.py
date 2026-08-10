@@ -317,16 +317,39 @@ def run() -> int:
                 pass
 
         def _tick_status(self, _timer):
+            import time
             try:
-                peers = engine.status().get("peers", [])
+                status = engine.status()
             except Exception:
-                peers = []
-            online = [p for p in peers if p["online"]]
-            if not peers:
-                txt = "Not paired with any device"
-            else:
-                txt = f"Paired: {len(peers)} ({len(online)} online)"
-            self.menu["Sync status"].title = txt
+                status = {}
+            peers = status.get("peers", [])
+            stale = status.get("stale", [])
+            if not peers and not stale:
+                self.menu["Sync status"].title = "Not paired with any device"
+                return
+            # A green bulb per reachable device, grey per unreachable — same
+            # meaning as the Linux dots (🟢 = answered a liveness ping recently).
+            parts = [("🟢 " if p["online"] else "⚪️ ") + p["name"] for p in peers]
+            line = "   ".join(parts)
+            lc = status.get("last_check")
+            if peers and lc:
+                ago = max(0, int(time.time() - lc))
+                line += "   ·  checked just now" if ago < 2 else f"   ·  checked {ago}s ago"
+            if stale:
+                names = ", ".join(s["name"] for s in stale)
+                pre = f"⚠️ Re-pair required: {names}"
+                line = pre if not line else pre + "\n" + line
+                # Prompt once per launch so the user knows why sync stopped.
+                if not getattr(self, "_stale_notified", False):
+                    self._stale_notified = True
+                    try:
+                        rumps.notification(
+                            "Clippy — re-pair required", "",
+                            f"A security update disabled the old pairing. "
+                            f"Re-pair {names} to resume syncing.")
+                    except Exception:
+                        pass
+            self.menu["Sync status"].title = line
 
         @rumps.clicked("Settings…")
         def open_settings(self, _):
