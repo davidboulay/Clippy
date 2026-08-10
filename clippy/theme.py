@@ -260,7 +260,20 @@ def build_css(dark: bool | None = None) -> str:
 
 .meta {{ color: {c['dim2']}; font-size: 10.5px; margin-top: 4px; }}
 .empty {{ color: {c['dim']}; font-size: 14px; }}
-.hint {{ color: {c['dim2']}; font-size: 11px; margin: 6px 22px 0 22px; }}
+.hint {{ margin: 6px 22px 0 22px; }}
+.hint-text {{ color: {c['dim2']}; font-size: 11px; }}
+.kbd {{
+    color: {c['dim']};
+    background-color: {c['field']};
+    border: 1px solid {c['border']};
+    border-radius: 5px;
+    padding: 0 5px;
+    font-family: monospace;
+    font-size: 10px;
+    font-weight: 600;
+    min-height: 0;
+    min-width: 0;
+}}
 
 /* COSMIC-like scrollbar: a slim, rounded, theme-adaptive bar (no stepper
    arrows, transparent trough). The 3px transparent border + padding-box clip

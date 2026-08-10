@@ -448,16 +448,37 @@ class Panel:
         self.empty_label.get_style_context().add_class("empty")
         self.empty_label.set_justify(Gtk.Justification.CENTER)
 
-        hint = Gtk.Label(
-            label="←/→ navigate   ↵ paste   right-click for options   "
-                  "☆ pin   Del delete   Esc close"
-        )
-        hint.get_style_context().add_class("hint")
-        body.pack_start(hint, False, False, 0)
+        body.pack_start(self._build_hint_bar(), False, False, 0)
 
         self.window.connect("key-press-event", self._on_key)
         self.window.connect("focus-out-event", self._on_focus_out)
         self.window.connect("delete-event", lambda *_: (self.hide(), True)[1])
+
+    def _build_hint_bar(self) -> Gtk.Widget:
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        bar.get_style_context().add_class("hint")
+        bar.set_halign(Gtk.Align.CENTER)
+
+        # keycap=False for mouse gestures: a bordered chip reads as "a key you
+        # press", which a right-click is not.
+        def group(keys: tuple, text: str, keycap: bool = True) -> None:
+            g = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            for key in keys:
+                kbd = Gtk.Label(label=key)
+                kbd.get_style_context().add_class("kbd" if keycap else "hint-text")
+                g.pack_start(kbd, False, False, 0)
+            label = Gtk.Label(label=text)
+            label.get_style_context().add_class("hint-text")
+            g.pack_start(label, False, False, 0)
+            bar.pack_start(g, False, False, 0)
+
+        group(("←", "→"), "navigate")
+        group(("↵",), "paste")
+        group(("right-click",), "for options", keycap=False)
+        group(("Ctrl", "P"), "pin")
+        group(("Del",), "delete")
+        group(("Esc",), "close")
+        return bar
 
     def _build_header(self) -> Gtk.Widget:
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
