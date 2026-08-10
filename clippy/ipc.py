@@ -81,7 +81,18 @@ class Server:
             except OSError:
                 pass
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.bind(path)
+        # Create the socket already 0600 rather than binding at the process
+        # umask and widening the window with a follow-up chmod. Normally the
+        # socket lives in XDG_RUNTIME_DIR (0700, owner-only), but it can fall
+        # back to a shared /tmp; there, the bind-then-chmod gap let another
+        # local user connect to a briefly world-accessible control socket. The
+        # umask closes that gap at creation; the chmod stays as a backstop for
+        # platforms that ignore umask on AF_UNIX binds.
+        old_umask = os.umask(0o177)
+        try:
+            self._sock.bind(path)
+        finally:
+            os.umask(old_umask)
         os.chmod(path, 0o600)
         self._sock.listen(8)
         self._running = True

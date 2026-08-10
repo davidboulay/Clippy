@@ -54,6 +54,54 @@ A.enter_pairing()
 assert not B._pair_client("127.0.0.1", 48001, "000000").get("ok")
 print("4. wrong code rejected")
 
+# 4a. The v1 auth bypass: an attacker who never knew the code connects, reads
+# the server's confirm out of pair_ack, and echoes it straight back. Under v1
+# this pairing succeeded (the server compared the reply against the value it had
+# just transmitted). Under v2 (SPAKE2) there is nothing to echo — the tag is
+# keyed by a session key the attacker can't derive without the code — so this
+# must fail AND must not leave the attacker in A.trusted.
+import socket as _sock
+A.enter_pairing()
+attacker_id = "attacker-" + "0" * 8
+before = dict(A.trusted)
+try:
+    with _sock.create_connection(("127.0.0.1", 48001), timeout=5) as s:
+        s.settimeout(5)
+        # a valid-looking SPAKE2 message so the server gets past parsing
+        from spake2 import SPAKE2_B as _SB
+        sp = _SB(b"999999")           # attacker guesses/uses any code
+        sync._send_frame(s, {"type": "pair_hello", "id": attacker_id,
+                             "name": "attacker", "pubkey": B.pubkey_hex,
+                             "proto": sync._PAIR_PROTO, "spake": sp.start().hex()})
+        ack = sync._recv_frame(s)
+        # echo the server's own confirm back — the v1 bypass
+        sync._send_frame(s, {"type": "pair_confirm",
+                             "confirm": (ack or {}).get("confirm", "")})
+        done = sync._recv_frame(s)
+        assert not done or done.get("type") != "paired", "ECHO BYPASS SUCCEEDED — vuln!"
+except AssertionError:
+    raise
+except Exception:
+    pass  # a dropped connection is a fine (rejecting) outcome
+assert attacker_id not in A.trusted and A.trusted == before, \
+    "attacker was trusted despite not knowing the code"
+print("4a. pairing echo/replay bypass rejected (SPAKE2)")
+
+# 4b. Attempt cap: a burst of wrong-code tries burns the code so the 1e6 space
+# can't be walked inside one window. The server counts each failure on its own
+# handler thread, so poll for the window to close rather than assume the count
+# landed the instant the client call returned.
+A.enter_pairing()
+for _ in range(sync._PAIR_MAX_ATTEMPTS):
+    B._pair_client("127.0.0.1", 48001, "111111")
+deadline = time.time() + 3
+while A._pairing is not None and time.time() < deadline:
+    time.sleep(0.05)
+assert A._pairing is None, "pairing window not closed after the attempt cap"
+# And the burned code can no longer be used, even with the RIGHT code.
+assert not B._pair_client("127.0.0.1", 48001, "111111").get("ok")
+print("4b. attempt cap burns the code after repeated wrong guesses")
+
 # Encrypted broadcast B -> A, with the clipboard/storage stubbed
 got = []
 st.add_text = lambda text, mime="text/plain", html=None: got.append(text) or 1

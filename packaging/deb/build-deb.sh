@@ -79,7 +79,7 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtk-4.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf
+Depends: python3 (>= 3.10), python3-gi, gir1.2-gtk-3.0, gir1.2-gtk-4.0, gir1.2-gtklayershell-0.1, libgtk-layer-shell0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, wl-clipboard, python3-nacl, python3-zeroconf, python3-spake2
 Recommends: pipewire-bin | pulseaudio-utils, xclip, poppler-utils
 Maintainer: David Boulay <89959743+davidboulay@users.noreply.github.com>
 Installed-Size: $INSTALLED_KB

@@ -22,7 +22,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install runtime deps
-        run: pip install --quiet pynacl zeroconf
+        run: pip install --quiet pynacl zeroconf spake2
 
       - name: Byte-compile all sources
         run: python -m compileall -q clippy scripts

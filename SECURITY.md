@@ -42,12 +42,16 @@ feature request — open an issue.
 
 These are the parts where a report is most likely to be a real vulnerability:
 
-- **LAN clipboard sync** (opt-in, off by default). Peers are paired out-of-band
-  with a short code and thereafter authenticated by long-term X25519 identity
-  keys; traffic is encrypted with NaCl. The private key lives at
-  `~/.local/share/clippy/identity.key` (`0600`) and trusted peers in
-  `peers.json` (`0600`). Pairing, key handling, replay, and anything that lets an
-  unpaired device read or inject clipboard content are all in scope.
+- **LAN clipboard sync** (opt-in, off by default). Pairing uses a SPAKE2
+  password-authenticated key exchange keyed by the shown 6-digit code: neither
+  side transmits the code or anything derived from it that an eavesdropper could
+  offline-crack, and a wrong code cannot complete the handshake. Guessing is
+  online-only and capped per pairing window. Paired peers are thereafter
+  authenticated by long-term X25519 identity keys and traffic is encrypted with
+  NaCl. The private key lives at `~/.local/share/clippy/identity.key` (`0600`)
+  and trusted peers in `peers.json` (`0600`). Pairing, key handling, replay, and
+  anything that lets an unpaired device read or inject clipboard content are all
+  in scope.
 - **The IPC control socket** in `$XDG_RUNTIME_DIR` (`0600`). It accepts commands
   that can read and set the clipboard, so anything that widens access to it, or
   gets a command executed that shouldn't be, is in scope.
