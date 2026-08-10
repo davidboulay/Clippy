@@ -38,6 +38,9 @@ The same panel and history engine run on both platforms:
   text, images, and **any file**, with previews and a size cap you control.
 - **Local-only storage** — SQLite + files under your data dir; nothing leaves
   your machine unless you pair devices for sync.
+- **Diagnosable** — `clippy types` shows what the clipboard is actually offering
+  and how Clippy would file it; `CLIPPY_DEBUG=1` traces every capture and
+  restore. See [When a clip won't paste](#when-a-clip-wont-paste).
 
 Each platform integrates natively:
 
@@ -94,7 +97,8 @@ Dependencies (handled by the `.deb`): `wl-clipboard`, `python3-gi`,
 `gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
 plus `python3-nacl` + `python3-zeroconf` for sync (`poppler-utils` for PDF
 thumbnails — pulled in via Recommends; `ffmpeg` optional for video thumbnails;
-`xclip` optional, to paste images/files into XWayland apps).
+`xclip` optional — a fallback for reaching XWayland apps when the GTK 4 owner
+can't start).
 
 #### Set the Linux shortcut
 
@@ -236,17 +240,55 @@ dir (macOS):
 - `identity.key` (`0600`) + `peers.json` — sync identity key and trusted devices
 - `copy.wav` — synthesized copy sound
 
+- `tabs.json`, `device-id`, `sync.log` — custom tabs, this device's stable id,
+  and a log of sync deliveries
+- `debug.log` — only written when diagnostics are switched on (see below)
+
 Preferences live in `settings.json` (Linux: `~/.config/clippy/`), edited via the
 Settings window. Fixed limits/geometry are in `clippy/config.py`. On Linux,
 `./scripts/uninstall.sh --purge` removes everything, and a backup of your COSMIC
 shortcuts is kept the first time Clippy edits them.
 
+## When a clip won't paste
+
+Clipboard problems on Wayland are timing- and compositor-dependent, so guessing
+is expensive. Two things answer most questions:
+
+```sh
+clippy types      # what the clipboard is offering right now, and how Clippy
+                  # would file it — plus who owns the X11 selection
+```
+
+```sh
+CLIPPY_DEBUG=1 clippy daemon   # trace every capture, publish and release to
+                               # ~/.local/share/clippy/debug.log
+```
+
+(`debug_log` in `settings.json` does the same thing permanently.) A bug report
+with a few lines of that trace is worth far more than a description of the
+symptom.
+
+Two things are worth knowing before reading the output:
+
+- **An empty X11 result is usually normal.** The compositor exports the
+  selection to X11 only while an X11 window has keyboard focus, and gates reads
+  the same way — so an unfocused probe (including `xclip` from a terminal) sees
+  nothing even when the clipboard is perfectly healthy. It means "not exported
+  yet", not "broken".
+- **Some compositor bugs aren't Clippy's to fix.** cosmic-comp corrupts clips of
+  256 KiB or more when proxying them from X11 to Wayland; Clippy works around it
+  by writing the Wayland selection itself. See
+  [`docs/cosmic-comp-clipboard-bug.md`](docs/cosmic-comp-clipboard-bug.md) for
+  the analysis and a standalone reproducer.
+
 ## Limitations
 
 - **No auto-paste.** Selecting a tile sets the clipboard; you press
   <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd> yourself.
-- **Plain/rich** uses `text/html` for the rich case; plain-only apps still get
-  plain text via the plain-text path.
+- **Plain/rich.** A restored rich clip is offered as `text/html` *and* as plain
+  text simultaneously, so apps that only ask for plain targets paste correctly
+  without you having to pick "Copy as plain text". Set `always_plain_text` in
+  Settings if you'd rather formatting were never restored.
 - **Linux** needs a compositor with `wlr-layer-shell` **and**
   `ext-/wlr-data-control` (COSMIC, Sway, Hyprland); a plain GNOME Wayland session
   lacks layer-shell. The panel appears on the active output.
@@ -276,6 +318,11 @@ clippy/
   capture.py         read clipboard → storage (+ sound, retention)
   clipboard.py       backend dispatch (text/image/file read + write)
   backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
+  x11clip.py         persistent X11/XWayland selection owner (multi-flavor)
+  richtext.py        html → plain text, for clips carrying only markup
+  debuglog.py        opt-in capture/publish/release trace (CLIPPY_DEBUG=1)
+  notify.py          fire-and-forget desktop notifications
+  updates.py         GitHub release check + in-app update  ·  mac_update.py
   sync.py            encrypted LAN sync engine (mDNS, pairing, streamed media)
   progress.py        sender transfer-progress window (large media)
   storage.py         SQLite history (+ html column, files, time retention)
@@ -286,7 +333,8 @@ clippy/
   ipc.py             Unix-socket control channel
   config.py          paths & limits
 packaging/           deb · arch · appimage · macos (py2app) builders
-scripts/install.sh · scripts/uninstall.sh · data/icons/clippy.png
+scripts/             install/uninstall + the test suite (scripts/README.md)
+docs/                screenshots · cosmic-comp-clipboard-bug.md
 ```
 
 ## License
