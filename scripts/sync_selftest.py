@@ -111,15 +111,24 @@ print("4b. attempt cap burns the code after repeated wrong guesses")
 assert A.trusted[B.device_id].get("proto") == sync._PAIR_PROTO, A.trusted[B.device_id]
 print("4c. new trust is tagged with the pairing protocol version")
 
-# 4c-bis. Unpair must NOT wipe mDNS discovery, or an immediate re-pair fails
-# with "no devices found on the LAN".
+# 4c-bis. Unpair is mutual (the other side is told and drops trust too), and it
+# must NOT wipe mDNS discovery, or an immediate re-pair fails with "no devices
+# found on the LAN".
+A._peers_online[B.device_id] = ("127.0.0.1", 48002, "B")   # so B can be notified
 B._peers_online[A.device_id] = ("127.0.0.1", 48001, "A")   # ensure discovered
+assert A.device_id in B.trusted and B.device_id in A.trusted
 assert B.unpair(A.device_id) is True
+# B told A; A should drop B shortly (notice is sent on a background thread).
+for _ in range(50):
+    if B.device_id not in A.trusted:
+        break
+    time.sleep(0.1)
+assert B.device_id not in A.trusted, "unpair was not mutual — A still trusts B"
 assert A.device_id in B._peers_online, "unpair wiped discovery — re-pair would fail"
 A.enter_pairing()
-res2 = B.join_pairing(A.enter_pairing() if False else A._pairing["code"])
+res2 = B.join_pairing(A._pairing["code"])
 assert res2.get("ok") and A.device_id in B.trusted, res2
-print("4c-bis. unpair keeps discovery; immediate re-pair succeeds")
+print("4c-bis. unpair is mutual, keeps discovery, and re-pair succeeds")
 
 # 4d. Live reachability: A pings B (both listening) -> B is reported online with
 # a last_seen, and the status carries a last_check timestamp.

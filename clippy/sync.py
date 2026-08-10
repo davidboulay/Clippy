@@ -362,11 +362,35 @@ class SyncEngine:
         is independent of trust — the status list already shows only trusted
         peers, so an unpaired device won't appear as online regardless — so this
         no longer touches it, and the device stays pairable straight away."""
+        peer = self.trusted.get(peer_id)
         removed = self.trusted.pop(peer_id, None) is not None
         self._last_seen.pop(peer_id, None)
         if removed:
             self._save_peers()
+            # Tell the other device, so unpair is mutual. Best-effort: if it's
+            # offline it simply keeps the (now one-sided) trust until it next
+            # hears from us or is unpaired there too.
+            if peer:
+                threading.Thread(target=self._send_unpair, args=(peer_id, peer),
+                                 daemon=True).start()
         return removed
+
+    def _send_unpair(self, peer_id: str, peer: dict) -> None:
+        """Send an authenticated 'I unpaired you' notice to a former peer."""
+        try:
+            box = Box(self._priv, PublicKey(bytes.fromhex(peer["pubkey"])))
+            payload = json.dumps({"kind": "unpair"}).encode("utf-8")
+            frame = {"type": "sync", "from": self.device_id,
+                     "box": bytes(box.encrypt(payload)).hex()}
+        except Exception:
+            return
+        for ip, port in self._peer_addrs(peer_id, peer):
+            try:
+                with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
+                    _send_frame(s, frame)
+                return
+            except OSError:
+                continue
 
     def _adopt_peer_id(self, fp: str, new_id: str) -> Optional[dict]:
         """Reconcile a trusted peer onto its current ``device_id``.
@@ -652,14 +676,30 @@ class SyncEngine:
 
     # -- sync transport --------------------------------------------------
     def _handle_sync(self, frame: dict) -> None:
-        _sender, _peer, clear = self._open_frame(frame)
+        sender, _peer, clear = self._open_frame(frame)
         if clear is None:
             return  # not paired / undecryptable -> reject
         try:
             env = json.loads(clear.decode("utf-8"))
         except Exception:
             return
+        if env.get("kind") == "unpair":
+            # The peer unpaired us. The frame decrypted against their key, so
+            # this is authenticated — drop them from our trust too, so unpair is
+            # mutual (otherwise our side keeps showing them paired and green).
+            self._drop_trust(sender)
+            return
         self.on_receive(env)
+
+    def _drop_trust(self, peer_id) -> None:
+        if peer_id and self.trusted.pop(peer_id, None) is not None:
+            self._last_seen.pop(peer_id, None)
+            self._save_peers()
+            if self._on_status:
+                try:
+                    self._on_status()
+                except Exception:
+                    pass
 
     def on_receive(self, env: dict) -> None:
         if env.get("origin") == self.device_id:
