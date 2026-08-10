@@ -459,11 +459,13 @@ class Panel:
         bar.get_style_context().add_class("hint")
         bar.set_halign(Gtk.Align.CENTER)
 
-        def group(keys: tuple, text: str) -> None:
+        # keycap=False for mouse gestures: a bordered chip reads as "a key you
+        # press", which a right-click is not.
+        def group(keys: tuple, text: str, keycap: bool = True) -> None:
             g = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
             for key in keys:
                 kbd = Gtk.Label(label=key)
-                kbd.get_style_context().add_class("kbd")
+                kbd.get_style_context().add_class("kbd" if keycap else "hint-text")
                 g.pack_start(kbd, False, False, 0)
             label = Gtk.Label(label=text)
             label.get_style_context().add_class("hint-text")
@@ -472,8 +474,8 @@ class Panel:
 
         group(("←", "→"), "navigate")
         group(("↵",), "paste")
-        group(("right-click",), "for options")
-        group(("☆",), "pin")
+        group(("right-click",), "for options", keycap=False)
+        group(("Ctrl", "P"), "pin")
         group(("Del",), "delete")
         group(("Esc",), "close")
         return bar
