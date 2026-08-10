@@ -74,7 +74,13 @@ def _log(msg: str) -> None:
     Every delivery is recorded, successes included — a log that only spoke up on
     retries and failures made a healthy idle sync and a dead one look identical,
     and reading that silence as "nothing was even attempted" cost two wrong
-    diagnoses. Self-bounds the file so it can't grow without limit."""
+    diagnoses. Self-bounds the file so it can't grow without limit.
+
+    Owner-only (0600), like the identity key and peer list beside it. No clip
+    contents are written, but the lines do name paired devices, their addresses
+    and copied filenames — session metadata that other local accounts have no
+    business reading.
+    """
     try:
         _SYNC_LOG.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -82,8 +88,19 @@ def _log(msg: str) -> None:
                 _SYNC_LOG.write_bytes(_SYNC_LOG.read_bytes()[-256 * 1024:])
         except OSError:
             pass
-        with open(_SYNC_LOG, "a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+        # Create it 0600 rather than at the process umask, and repair an existing
+        # file left world-readable by an earlier version.
+        fd = os.open(str(_SYNC_LOG), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"
+                     .encode("utf-8", "replace"))
+        finally:
+            os.close(fd)
+        try:
+            if (_SYNC_LOG.stat().st_mode & 0o077) != 0:
+                os.chmod(_SYNC_LOG, 0o600)
+        except OSError:
+            pass
     except Exception:
         pass
 
