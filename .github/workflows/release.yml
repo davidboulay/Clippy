@@ -14,7 +14,7 @@ jobs:
   deb:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: |
@@ -39,7 +39,7 @@ jobs:
     # Gatekeeper still shows "unidentified developer" on first launch.
     needs: deb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build .app + .dmg
         run: ./packaging/macos/build-app.sh --dmg
