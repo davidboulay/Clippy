@@ -1,4 +1,5 @@
-"""Clippy — a clipboard-history panel for Wayland/COSMIC.
+"""Clippy — a clipboard-history panel for Wayland (COSMIC, Hyprland/Omarchy,
+and other wlroots compositors) and macOS.
 
 A global shortcut slides a strip of clipboard tiles up from the bottom of the
 screen (text + images). Lives in the system tray, never in the dock.

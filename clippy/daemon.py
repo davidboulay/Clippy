@@ -124,6 +124,9 @@ class AppController:
             screen, self._css, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
         self.refresh_theme()
+        self._theme_monitors = []
+        self._theme_timer = 0
+        self._watch_theme()
 
         from . import tray
         self.tray = tray.create(self)
@@ -142,6 +145,40 @@ class AppController:
         if gsettings is not None:
             gsettings.set_property("gtk-application-prefer-dark-theme", dark)
         self._css.load_from_data(theme.build_css(dark).encode("utf-8"))
+
+    def _watch_theme(self) -> None:
+        """Re-style live when the desktop theme changes (`omarchy theme set`,
+        COSMIC's light/dark toggle). Best-effort: without a monitor the theme
+        is still correct at startup and after any settings change."""
+        from gi.repository import Gio
+
+        for path in theme.theme_paths():
+            try:
+                monitor = Gio.File.new_for_path(str(path)).monitor(
+                    Gio.FileMonitorFlags.WATCH_MOVES, None
+                )
+            except Exception:
+                continue
+            monitor.connect("changed", self._on_theme_file_changed)
+            self._theme_monitors.append(monitor)
+
+    def _on_theme_file_changed(self, *_args) -> None:
+        # A theme switch rewrites several files at once; coalesce the burst into
+        # one restyle rather than rebuilding the CSS for each event.
+        from gi.repository import GLib
+
+        if self._theme_timer:
+            GLib.source_remove(self._theme_timer)
+        self._theme_timer = GLib.timeout_add(250, self._theme_settled)
+
+    def _theme_settled(self) -> bool:
+        from gi.repository import GLib
+
+        self._theme_timer = 0
+        self.refresh_theme()
+        if self.panel._visible:
+            self.panel.reload()
+        return GLib.SOURCE_REMOVE
 
     def open_panel(self) -> None:
         self.panel.show()

@@ -7,7 +7,7 @@ and the `wl-clipboard` CLI. That shapes how each format works.
 | Format | Fit | Build | Notes |
 |--------|-----|-------|-------|
 | **.deb** | ✅ best on Ubuntu/Pop!_OS/Debian | `make deb` | Built & verified. Deps resolved by apt. |
-| **Arch** | ✅ good on Arch/Manjaro | `make arch` | `PKGBUILD` builds from the local tree. |
+| **Arch** | ✅ best on Arch/Omarchy/Manjaro | `make arch` | `PKGBUILD` builds from the local tree. Built & verified on Omarchy 4. |
 | **Flatpak** | ❌ broken on COSMIC | `make flatpak` | The sandbox's Wayland security-context makes COSMIC withhold layer-shell + data-control, so the panel and clipboard watching don't work. See [`FLATHUB.md`](../FLATHUB.md). |
 | **AppImage** | ⚠️ experimental | `make appimage` | GI/GTK bundling is fragile; prefer .deb. |
 | **source** | ✅ any wlroots/COSMIC distro | `./scripts/install.sh` | Installs deps + a `~/.local/bin` launcher. |
@@ -72,11 +72,35 @@ make arch           # or: cd packaging/arch && makepkg -f
 sudo pacman -U packaging/arch/clippy-*.pkg.tar.zst
 ```
 
-Depends on `python-gobject gtk3 gtk-layer-shell libayatana-appindicator
-wl-clipboard`.
+- `arch=('any')` (pure Python; the GI/GTK deps come from pacman).
+- `Depends:` python, python-gobject, gtk3, gtk-layer-shell,
+  libayatana-appindicator, wl-clipboard. Everything else — LAN sync
+  (`python-pynacl`, `python-zeroconf`, `python-spake2`), sounds, thumbnails,
+  the XWayland fallback — is an `optdepend`, so a minimal install stays minimal.
+- **The package tree goes to `/usr/lib/clippy`, not site-packages**, and
+  `/usr/bin/clippy` puts it on `PYTHONPATH`. Installing into
+  `/usr/lib/python3.X/site-packages` would bake the current Python minor version
+  into the package, and Arch's next Python bump would break the app until a
+  rebuild — `arch=('any')` promises that won't happen.
+- **The icon is installed as SVG + the 512px master, never rasterised at build
+  time.** gdk-pixbuf's loaders run inside a `bwrap` sandbox on current Arch,
+  which cannot start under `fakeroot`; scaling in `package()` fails with
+  `Loader process exited early`.
+- `clippy.install` prints the post-install steps and, on upgrade, reminds you to
+  restart the daemon (it deliberately does *not* kill it — that would stop
+  clipboard capture mid-session).
 
 ## Bumping the version
 
 Edit `__version__` in `clippy/__init__.py`; the deb/appimage scripts read it,
 and update `pkgver` in `packaging/arch/PKGBUILD` and the `<release>` in
 `packaging/flatpak/io.github.davidboulay.Clippy.metainfo.xml`.
+
+## Adding a subpackage under `clippy/`
+
+Three places enumerate them and all three must be updated together, or the new
+modules are simply missing at runtime on that format:
+
+- `pyproject.toml` → `[tool.setuptools] packages`
+- `packaging/deb/build-deb.sh` → the `for sub in …` copy loop
+- nothing for arch/appimage/flatpak — those copy `clippy/` wholesale.

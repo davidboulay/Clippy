@@ -23,6 +23,7 @@ they are safe anywhere and run on every PR.
 | `storage_migration_test.py` | the `UNIQUE(kind, hash)` rebuild preserves every row; new code still works against the *old* schema |
 | `resilience_test.py` | corrupt-database errors reach callers as `OSError`, IPC stays responsive during a slow command, sound-debounce races |
 | `x11_takeover_gate_test.py` | capture-time X11 takeover stays opt-in, echo-safe and rate-capped |
+| `desktops_test.py` | per-desktop shortcut round-trips (Omarchy Lua block, plain-Hyprland `source =`) leave the user's config otherwise untouched; Omarchy `colors.toml` parsing, incl. `#rrggbb` values vs. TOML comments |
 | `sync_selftest.py`, `sync_delivery_test.py`, `sync_drift_test.py`, `sync_readvertise_test.py` | LAN sync: crypto, delivery hardening, device-id drift, mDNS refresh |
 | `mac_selector_test.py`, `mac_pasteboard_test.py` | PyObjC selector prototypes and macOS pasteboard MIME honesty (no Mac required) |
 

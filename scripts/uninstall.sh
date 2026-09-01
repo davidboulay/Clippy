@@ -16,7 +16,7 @@ pkill -f "python3 -m clippy daemon" 2>/dev/null || true
 
 echo "==> Removing the COSMIC shortcut Clippy registered (backup is kept)"
 PYTHONPATH="$PROJECT_DIR" python3 -c \
-    "from clippy import setup; print('removed' if setup.remove_cosmic_shortcut() else 'none')" \
+    "from clippy import setup; print('removed' if setup.remove_shortcut() else 'none')" \
     2>/dev/null || echo "    (skipped)"
 
 echo "==> Removing launcher, autostart, app entry, icons"

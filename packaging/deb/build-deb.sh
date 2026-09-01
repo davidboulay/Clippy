@@ -24,8 +24,11 @@ mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" "$SITE" \
 # take the sources and the icons deliberately, and nothing else.
 mkdir -p "$SITE/clippy"
 find "$REPO/clippy" -maxdepth 1 -name '*.py' -exec cp {} "$SITE/clippy/" \;
-cp -r "$REPO/clippy/backends" "$SITE/clippy/backends"
-cp -r "$REPO/clippy/icons" "$SITE/clippy/icons"
+# Every subpackage must be listed: a new one silently missing from the .deb
+# only shows up as an ImportError on the user's machine.
+for sub in backends desktops icons; do
+    cp -r "$REPO/clippy/$sub" "$SITE/clippy/$sub"
+done
 find "$SITE/clippy" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$SITE/clippy" -name '*.pyc' -delete 2>/dev/null || true
 

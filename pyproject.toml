@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "clippy"
 version = "0.2.0"
-description = "A Paste-style clipboard history panel for Wayland (COSMIC/wlroots)."
+description = "A Paste-style clipboard history panel for Wayland (Hyprland/Omarchy, COSMIC, wlroots) and macOS."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -23,4 +23,4 @@ macos = ["pynacl", "zeroconf", "spake2==0.8", "pyobjc-framework-Cocoa"]
 clippy = "clippy.cli:main"
 
 [tool.setuptools]
-packages = ["clippy", "clippy.backends"]
+packages = ["clippy", "clippy.backends", "clippy.desktops"]

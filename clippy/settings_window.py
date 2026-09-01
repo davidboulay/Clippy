@@ -2,7 +2,7 @@
 
 Exposes: open-at-login, copy sound, always-paste-as-plain-text, history
 retention with auto-delete, a clear-history action, a shortcut picker that
-writes the COSMIC binding directly, and an About section showing the version
+writes the desktop's binding directly, and an About section showing the version
 with a "check for updates" button (GitHub Releases).
 """
 from __future__ import annotations
@@ -508,7 +508,7 @@ class SettingsWindow:
 
     # -- current shortcut -------------------------------------------------
     def _current_combo(self):
-        live = setup.read_cosmic_shortcut()
+        live = setup.read_shortcut()
         if live:
             return live
         sc = settings.get("shortcut") or {}
@@ -549,14 +549,22 @@ class SettingsWindow:
             self._update_status.set_text(f"Couldn't check: {result.error}")
             self._update_actions.hide()
         elif result.update_available:
-            self._update_status.set_text(
+            note = (
                 f"Update available: {result.latest} (you have "
                 f"{updates.current_version()})"
             )
             self._update_url = result.url
-            self._deb_url = result.deb_url
-            # One-click install when the release ships a .deb; else just link.
-            self._update_btn.set_visible(bool(result.deb_url))
+            # One-click install only where we can drive the package manager
+            # safely — a .deb install. Everywhere else, say what to run.
+            self._deb_url = (
+                result.deb_url if updates.self_install_supported() else None
+            )
+            if not self._deb_url:
+                hint = updates.manual_update_hint()
+                if hint:
+                    note += f"\n{hint}"
+            self._update_status.set_text(note)
+            self._update_btn.set_visible(bool(self._deb_url))
             self._update_actions.show()
         else:
             self._update_status.set_text("You're up to date.")
@@ -654,13 +662,26 @@ class SettingsWindow:
             )
             self._sc_btn.set_label(self._current_combo_text())
             return
-        if setup.set_cosmic_shortcut(mods, key):
+        desktop = setup.shortcut_backend()
+        if not desktop.can_bind():
+            # Nowhere to write it -- record the choice so the label is right and
+            # point at `clippy setup-shortcut`, which prints the manual steps.
+            settings.set_value("shortcut", {"modifiers": mods, "key": key})
+            self._sc_btn.set_label(_combo_text(mods, key))
+            self._sc_desc.set_text(
+                f"{desktop.label} shortcuts can't be set from here — "
+                "run `clippy setup-shortcut` for the steps."
+            )
+            return
+        if setup.set_shortcut(mods, key):
             settings.set_value("shortcut", {"modifiers": mods, "key": key})
             self._sc_btn.set_label(_combo_text(mods, key))
             self._sc_desc.set_text("Saved. Try it now.")
         else:
             self._sc_btn.set_label(self._current_combo_text())
-            self._sc_desc.set_text("Could not write the COSMIC shortcut.")
+            self._sc_desc.set_text(
+                f"Could not write the {desktop.label} shortcut."
+            )
 
     def _on_key(self, _w, event):
         if self._capturing:

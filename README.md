@@ -76,8 +76,9 @@ Each platform integrates natively:
 
 ### Linux (Wayland)
 
-Built for **Wayland** — developed on **Pop!_OS 24.04 + COSMIC**, and also works
-on Sway, Hyprland, and other wlroots compositors.
+Built for **Wayland** — developed on **Pop!_OS 24.04 + COSMIC** and
+**Omarchy 4 (Arch + Hyprland)**, and also works on Sway and other wlroots
+compositors.
 
 **Ubuntu / Pop!_OS / Debian — APT repository (recommended)** — add the repo once,
 then install and get updates with `apt` like any system package:
@@ -102,9 +103,21 @@ sudo apt install ./clippy_*.deb
 `apt` pulls in the dependencies. Then launch **Clippy** from your app list, open
 **Settings**, and bind a shortcut (see [below](#set-the-linux-shortcut)).
 
+**Arch / Omarchy / Manjaro** — build and install the package from the tree:
+
+```bash
+git clone https://github.com/davidboulay/Clippy.git && cd Clippy
+make arch                                            # -> packaging/arch/clippy-<ver>-any.pkg.tar.zst
+sudo pacman -U packaging/arch/clippy-*.pkg.tar.zst
+```
+
+`pacman` pulls the dependencies; the optional ones (LAN sync, sounds,
+thumbnails) are listed as `optdepends` — install them with
+`sudo pacman -S python-pynacl python-zeroconf python-spake2`. Update later by
+rebuilding, or with your AUR helper once the package is published.
+
 **Other distributions**
 
-- **Arch / Manjaro:** `cd packaging/arch && makepkg -si`
 - **AppImage** (experimental, any distro): `make appimage`, then run `dist/Clippy-*.AppImage`
 - **From source:** `git clone … && cd clippy && ./scripts/install.sh` — installs
   deps, a `~/.local/bin/clippy` launcher + icon, enables autostart, and starts
@@ -125,12 +138,32 @@ can't start).
 #### Set the Linux shortcut
 
 Open the tray icon → **Settings** (or the ⚙ in the panel), click the shortcut
-button, and press your combo (e.g. <kbd>Super</kbd>+<kbd>V</kbd>). Clippy writes
-the COSMIC binding for you, keeping a backup of your existing shortcuts. To do it
-from the terminal: `clippy setup-shortcut`.
+button, and press your combo. Clippy writes the binding into whichever config
+your desktop actually reads, and `clippy status` shows which one it detected:
 
-> Tray not showing? Ensure COSMIC's **Status Area / applet** is on your panel.
-> Either way, the panel's ⚙ opens Settings and the shortcut still works.
+| Desktop | Where the binding goes |
+|---|---|
+| **COSMIC** | `~/.config/cosmic/…/Shortcuts/v1/custom`, with a one-time backup of your existing shortcuts |
+| **Omarchy** | a marked block in `~/.config/hypr/bindings.lua`, then `hyprctl reload` |
+| **Hyprland** (plain) | `~/.config/hypr/clippy.conf`, sourced once from `hyprland.conf`, then `hyprctl reload` |
+| anything else | nothing is written — `clippy setup-shortcut` prints what to bind by hand |
+
+To see the steps for your desktop from the terminal: `clippy setup-shortcut`.
+
+> **On Omarchy, pick a free key.** <kbd>Super</kbd>+<kbd>V</kbd> is *Universal
+> paste* and <kbd>Super</kbd>+<kbd>Ctrl</kbd>+<kbd>V</kbd> is Omarchy's own
+> clipboard manager. <kbd>Super</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> is free by
+> default. Check with `omarchy menu keybindings --print`; Clippy emits an
+> `hl.unbind` above its own bind, so it overrides cleanly if you do reuse a key.
+
+> Tray not showing? You need an SNI host on your panel — COSMIC's **Status
+> Area** applet, or the `omarchy.tray` widget in `~/.config/omarchy/shell.json`
+> (it ships enabled). Either way, the panel's ⚙ opens Settings and the shortcut
+> still works.
+
+Clippy follows the desktop's light/dark **and** its palette: COSMIC's theme
+files, or the active Omarchy theme's `colors.toml`. A running Clippy restyles
+itself when you switch themes — no restart.
 
 ### macOS
 
@@ -349,6 +382,7 @@ clippy/
   capture.py         read clipboard → storage (+ sound, retention)
   clipboard.py       backend dispatch (text/image/file read + write)
   backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
+  desktops/          per-desktop shortcut + theme: cosmic.py · hyprland.py · generic.py
   x11clip.py         persistent X11/XWayland selection owner (multi-flavor)
   richtext.py        html → plain text, for clips carrying only markup
   debuglog.py        opt-in capture/publish/release trace (CLIPPY_DEBUG=1)
@@ -358,12 +392,12 @@ clippy/
   progress.py        sender transfer-progress window (large media)
   storage.py         SQLite history (+ html column, files, time retention)
   settings.py        JSON preferences
-  theme.py           COSMIC light/dark → generated GTK CSS
+  theme.py           desktop light/dark + palette → generated GTK CSS
   sound.py           synthesize + play the copy sound
-  setup.py           autostart + COSMIC shortcut editing
+  setup.py           autostart, icons, app entry + shortcut dispatch
   ipc.py             Unix-socket control channel
   config.py          paths & limits
-packaging/           deb · arch · appimage · macos (py2app) builders
+packaging/           deb · arch (PKGBUILD) · appimage · macos (py2app) builders
 scripts/             install/uninstall + the test suite (scripts/README.md)
 docs/                screenshots · cosmic-comp-clipboard-bug.md
 ```
