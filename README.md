@@ -76,16 +76,19 @@ Each platform integrates natively:
 
 ## Get Clippy
 
-### Linux (Wayland)
+### Linux
 
-Built for **Wayland** — developed on **Pop!_OS 24.04 + COSMIC** and
-**Omarchy 4 (Arch + Hyprland)**, and also works on Sway and other wlroots
-compositors.
+**Requires Wayland** — specifically a compositor offering `wlr-layer-shell` and
+`ext-`/`wlr-data-control`. COSMIC, Hyprland and Sway all qualify; a plain GNOME
+Wayland session does not. Developed on **Pop!_OS 24.04 + COSMIC** and
+**Omarchy 4 (Arch + Hyprland)**.
 
-Clippy is packaged for two families. Both are first-class; they differ only in
-how mature the distribution channel is.
+Two independent things decide your setup, so they're covered separately below:
+**your distro picks the package**, and **your desktop picks the integration** —
+where the shortcut is written, which tray hosts the paperclip, which theme
+Clippy follows. Arch with COSMIC and Debian with Hyprland are both fine.
 
-#### Debian / Ubuntu / Pop!_OS
+#### Install — Debian / Ubuntu / Pop!_OS
 
 **APT repository (recommended)** — add it once, then install and update with
 `apt` like any system package:
@@ -105,7 +108,10 @@ gh release download --repo davidboulay/clippy --pattern '*.deb'
 sudo apt install ./clippy_*.deb
 ```
 
-#### Arch / Omarchy / Manjaro
+#### Install — Arch / Manjaro
+
+Omarchy, EndeavourOS and the other Arch derivatives are covered here too — they
+share `pacman`, and nothing in the package is derivative-specific.
 
 There is no published binary package or AUR entry yet, so build it from the
 tree — `makepkg` does the work and `pacman` resolves the dependencies:
@@ -154,11 +160,14 @@ Your package manager handles these; the list is here for source installs.
 | **Thumbnails** | `ffmpeg` (video), `poppler` (PDF) | `ffmpeg`, `poppler-utils` |
 | **XWayland paste fallback** | `xclip`, `gtk4` | `xclip`, `libgtk-4-1` |
 
-#### Set the Linux shortcut
+#### Desktop integration — shortcut, tray, theme
 
-Open the tray icon → **Settings** (or the ⚙ in the panel), click the shortcut
-button, and press your combo. Clippy writes the binding into whichever config
-your desktop actually reads, and `clippy status` shows which one it detected:
+This part follows your **desktop**, not your distro. `clippy status` prints the
+one it detected.
+
+**Shortcut.** Open the tray icon → **Settings** (or the ⚙ in the panel), click
+the shortcut button, and press your combo. Clippy writes the binding into
+whichever config your desktop actually reads:
 
 | Desktop | Where the binding goes |
 |---|---|
@@ -175,14 +184,15 @@ To see the steps for your desktop from the terminal: `clippy setup-shortcut`.
 > default. Check with `omarchy menu keybindings --print`; Clippy emits an
 > `hl.unbind` above its own bind, so it overrides cleanly if you do reuse a key.
 
-> Tray not showing? You need an SNI host on your panel — COSMIC's **Status
-> Area** applet, or the `omarchy.tray` widget in `~/.config/omarchy/shell.json`
-> (it ships enabled). Either way, the panel's ⚙ opens Settings and the shortcut
-> still works.
+**Tray.** The paperclip needs an SNI host on your panel — COSMIC's **Status
+Area** applet, or the `omarchy.tray` widget in `~/.config/omarchy/shell.json`
+(it ships enabled). Without one the panel's ⚙ still opens Settings and the
+shortcut still works.
 
-Clippy follows the desktop's light/dark **and** its palette: COSMIC's theme
-files, or the active Omarchy theme's `colors.toml`. A running Clippy restyles
-itself when you switch themes — no restart.
+**Theme.** Clippy follows the desktop's light/dark **and** its palette: COSMIC's
+theme files, or the active Omarchy theme's `colors.toml`; anything else falls
+back to the XDG portal for light/dark and Clippy's built-in palette. A running
+Clippy restyles itself when you switch themes — no restart.
 
 ### macOS
 
@@ -213,7 +223,7 @@ instead, since only the `.deb` can be upgraded safely from inside the app.
 
 | Action | Linux | macOS |
 |---|---|---|
-| Open / close the panel | your shortcut (see [above](#set-the-linux-shortcut)) | <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> |
+| Open / close the panel | your shortcut (see [above](#desktop-integration--shortcut-tray-theme)) | <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> |
 | Search history | type | type |
 | Move between tiles | <kbd>←</kbd>/<kbd>→</kbd>/<kbd>↑</kbd>/<kbd>↓</kbd> | <kbd>←</kbd>/<kbd>→</kbd> |
 | Copy selected & close | <kbd>Enter</kbd> | <kbd>Enter</kbd> |
