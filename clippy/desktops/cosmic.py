@@ -132,6 +132,12 @@ class CosmicDesktop:
             f"COSMIC stores it in:\n    {CUSTOM}\n"
         )
 
+    # -- clipboard quirks -------------------------------------------------
+    def x11_owner_serves_wayland(self) -> bool:
+        # cosmic-comp only mirrors regular -> data-control, so the X11 owner is
+        # how a recovered clip reaches native-Wayland apps. See x11clip.
+        return True
+
     # -- theme ------------------------------------------------------------
     def is_dark(self) -> bool:
         try:

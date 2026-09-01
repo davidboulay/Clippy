@@ -181,6 +181,56 @@ def test_generic():
     check_true("still explains itself", "clippy toggle" in d.shortcut_help("clippy toggle"))
 
 
+# --- the capability that decides whether wl-copy runs ---------------------
+def test_x11_owner_capability():
+    """A recovered clip must reach the Wayland selection everywhere except
+    cosmic-comp, where owning X11 is the bridge that works.
+
+    The regression this pins: `copy_text` published to the X11 owner, saw
+    success and returned *without* calling wl-copy. On cosmic-comp that is
+    correct. On Hyprland it meant a clicked tile set no selection at all —
+    Clippy logged `recover.ok` while the clipboard kept its previous value.
+    """
+    print("x11-owner capability")
+    fresh_home()
+    from clippy import clipboard, x11clip
+    from clippy.backends import wayland
+
+    from clippy.desktops.cosmic import CosmicDesktop
+    from clippy.desktops.generic import GenericDesktop
+    from clippy.desktops.hyprland import HyprlandDesktop
+    check("cosmic owns the bridge", CosmicDesktop().x11_owner_serves_wayland(), True)
+    check("hyprland does not", HyprlandDesktop().x11_owner_serves_wayland(), False)
+    check("nor does anything else", GenericDesktop().x11_owner_serves_wayland(), False)
+
+    # The X11 owner always accepts, so the early return is on the table.
+    x11clip.publish = lambda data: True
+    x11clip.publish_parts = lambda parts: True
+    x11clip.note_published = lambda *a, **k: None
+
+    calls = []
+    real_run = wayland.subprocess.run
+    wayland.subprocess.run = lambda cmd, *a, **k: calls.append(cmd) or real_run(
+        ["true"], capture_output=True)
+    wayland._x11_mirror_calls = 0
+    try:
+        for enough, expect_wl_copy in ((False, True), (True, False)):
+            for fn, label in (
+                (lambda: clipboard.copy_text("x"), "copy_text"),
+                (lambda: clipboard.copy_html("<b>x</b>", "x"), "copy_html"),
+            ):
+                wayland._X11_OWNER_IS_ENOUGH = enough
+                calls.clear()
+                fn()
+                ran = any(c and c[0] == "wl-copy" for c in calls)
+                where = "cosmic" if enough else "hyprland"
+                check(f"{label} on {where}: wl-copy {'runs' if expect_wl_copy else 'skipped'}",
+                      ran, expect_wl_copy)
+    finally:
+        wayland.subprocess.run = real_run
+        wayland._X11_OWNER_IS_ENOUGH = None
+
+
 def test_hex_parsing():
     print("hex parsing")
     fresh_home()
@@ -201,6 +251,7 @@ def main() -> int:
         test_plain_hyprland_shortcut()
         test_omarchy_theme()
         test_generic()
+        test_x11_owner_capability()
         test_hex_parsing()
     finally:
         if real_home:

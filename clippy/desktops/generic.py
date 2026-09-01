@@ -83,6 +83,13 @@ class GenericDesktop:
             "    Key:      e.g. Super + Shift + V\n"
         )
 
+    # -- clipboard quirks -------------------------------------------------
+    def x11_owner_serves_wayland(self) -> bool:
+        # The normal case: the compositor bridges its own selections, so
+        # wl-copy is what reaches Wayland apps and the X11 owner is only for
+        # XWayland. Hyprland inherits this.
+        return False
+
     # -- theme ------------------------------------------------------------
     def is_dark(self) -> bool:
         scheme = _portal_color_scheme()

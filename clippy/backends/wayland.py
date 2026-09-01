@@ -34,6 +34,9 @@ def _note_published(*payloads: bytes) -> None:
 # the panel responsive instead of hung.
 _WRITE_TIMEOUT = 5
 
+#: Cached answer to "does owning X11 also serve Wayland?" (cosmic-comp only).
+_X11_OWNER_IS_ENOUGH = None
+
 
 class WaylandBackend:
     def require_tools(self) -> None:
@@ -130,6 +133,21 @@ class WaylandBackend:
             return ""
         return raw.decode("utf-8", "replace")
 
+    @staticmethod
+    def _x11_owner_is_enough() -> bool:
+        """Whether publishing to the X11 owner alone reaches Wayland apps too.
+
+        Only cosmic-comp works that way. Cached: the compositor cannot change
+        under a running daemon."""
+        global _X11_OWNER_IS_ENOUGH
+        if _X11_OWNER_IS_ENOUGH is None:
+            try:
+                from ..desktops import get_desktop
+                _X11_OWNER_IS_ENOUGH = bool(get_desktop().x11_owner_serves_wayland())
+            except Exception:
+                _X11_OWNER_IS_ENOUGH = False
+        return _X11_OWNER_IS_ENOUGH
+
     def copy_text(self, text: str) -> None:
         # wl-copy only sets the wlr-data-control selection. cosmic-comp bridges
         # the *regular* wl_data_device selection into data-control (so wl-paste
@@ -142,11 +160,18 @@ class WaylandBackend:
         # Xwayland alive; fall back to wl-copy plus a one-shot xclip mirror only
         # when that owner isn't available.
         data = text.encode("utf-8")
-        if x11clip.publish(data):
+        published = x11clip.publish(data)
+        if published:
             _note_published(data)
-            return
+            if self._x11_owner_is_enough():
+                return
+        # Every other compositor bridges its own selections, so the X11 owner
+        # reaches XWayland only and wl-copy is what native-Wayland apps read.
+        # Skipping it here is what made a clicked tile land nowhere on Hyprland:
+        # publish() reported success, we returned, and no selection was set.
         subprocess.run(["wl-copy"], input=data, timeout=_WRITE_TIMEOUT)
-        self._x11_mirror(None, data)
+        if not published:
+            self._x11_mirror(None, data)
 
     def copy_html(self, html: str, text: Optional[str] = None) -> None:
         # A rich clip has to be offered *both* ways at once. Serving text/html
@@ -163,11 +188,21 @@ class WaylandBackend:
         parts: List[tuple] = [("text/html", data)]
         if plain_data:
             parts += [(m, plain_data) for m in x11clip.TEXT_MIMES]
-        if x11clip.publish_parts(parts):
+        published = x11clip.publish_parts(parts)
+        if published:
             # Track the plain flavor: a rich clip is re-captured (and stored) as
             # its plain text, so that — not the html — is the digest the echo
             # arrives with. Passing both keeps us honest if that ever changes.
             _note_published(plain_data, data)
+            if self._x11_owner_is_enough():
+                return
+            # Elsewhere the owner covers XWayland only, so the Wayland selection
+            # still needs setting. wl-copy carries one type per invocation and
+            # cannot express the union, so serve the flavor that pastes in the
+            # most places: rich paste into native-Wayland apps degrades to plain
+            # here, which beats the clip not arriving at all.
+            subprocess.run(["wl-copy"], input=plain_data or data,
+                           timeout=_WRITE_TIMEOUT)
             return
         # No persistent owner: fall back to one flavor per channel. Plain text
         # reaches far more apps than html does, so when only one can be served,
@@ -362,7 +397,8 @@ class WaylandBackend:
         img = self._image_bytes_for(path)
         if img is not None:
             parts = [img] + parts
-        if x11clip.publish_parts(parts):
+        published = x11clip.publish_parts(parts)
+        if published:
             # Track the file's *content* hash: that is what capture stores for a
             # file clip (storage.add_file_from_path), so it's the digest our own
             # echo arrives with. Without it the echo looked like someone else's
@@ -376,15 +412,20 @@ class WaylandBackend:
                 x11clip.note_published(h.hexdigest())
             except OSError:
                 pass
-            return
+            if self._x11_owner_is_enough():
+                return
         import urllib.request
         uri = urllib.request.pathname2url(path)
         payload = f"copy\nfile://{uri}".encode("utf-8")
+        # Set the Wayland selection too: outside cosmic-comp the owner above
+        # covers XWayland only, so without this a pasted file reaches nothing
+        # native. One type per wl-copy, and file managers want this one.
         subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
                        input=payload, timeout=_WRITE_TIMEOUT)
-        # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
-        # (editors, some chat apps) see it too.
-        self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
+        if not published:
+            # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
+            # (editors, some chat apps) see it too.
+            self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
 
     @staticmethod
     def _image_bytes_for(path: str):

@@ -82,6 +82,21 @@ class Desktop(Protocol):
         setup-shortcut` and the settings window's fallback text."""
         ...
 
+    # -- clipboard quirks -------------------------------------------------
+    def x11_owner_serves_wayland(self) -> bool:
+        """Whether owning the X11 selection also serves native-Wayland apps.
+
+        True only on cosmic-comp, which mirrors the regular ``wl_data_device``
+        selection into wlr-data-control but not back out — so a ``wl-copy``
+        (data-control) clip is invisible to GUI apps, and Xwayland re-exposing
+        the X11 selection *as* the regular one is the only bridge that works.
+
+        Everywhere else this is False and must stay False: assuming otherwise
+        means Clippy publishes to the X11 owner, returns satisfied, and never
+        writes the Wayland selection at all — the clip reaches nothing.
+        """
+        ...
+
     # -- theme ------------------------------------------------------------
     def is_dark(self) -> bool:
         """The desktop's current dark/light state."""

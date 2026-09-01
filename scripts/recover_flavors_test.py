@@ -56,12 +56,19 @@ class Recorder:
         self.published = {d for d in digests if d}
 
 
-def install(monkeypatch_accept=True):
-    """Point the backend at a Recorder and neutralise the shell fallbacks."""
+def install(monkeypatch_accept=True, owner_is_enough=True):
+    """Point the backend at a Recorder and neutralise the shell fallbacks.
+
+    ``owner_is_enough`` pins the desktop capability rather than letting the host
+    decide it: whether publishing to the X11 owner is *also* the Wayland
+    selection is true on cosmic-comp and false everywhere else, and the two
+    answers give different, both-correct call patterns below.
+    """
     import subprocess
 
     from clippy.backends import wayland
 
+    wayland._X11_OWNER_IS_ENOUGH = owner_is_enough
     rec = Recorder(monkeypatch_accept)
     wayland.x11clip.publish = rec.publish
     wayland.x11clip.publish_parts = rec.publish_parts
@@ -92,9 +99,19 @@ check("html comes first (richest flavor leads)", mimes[0], "text/html")
 plain_parts = [d for m, d in rec.parts if m.startswith("text/plain")]
 check("the plain flavor is the plain text, not the markup",
       plain_parts[0], PLAIN.encode())
-check("no fallback wl-copy when the owner accepted", rec.wl_copy_calls, [])
+check("cosmic: no fallback wl-copy when the owner accepted", rec.wl_copy_calls, [])
 check("the digest recorded is the plain text's",
       hashlib.sha256(PLAIN.encode()).hexdigest() in (rec.published or set()), True)
+
+print("rich text recover off cosmic-comp (the Hyprland regression)")
+# Elsewhere the owner reaches XWayland only, so the Wayland selection still has
+# to be written or a clicked tile sets nothing at all.
+rec = install(owner_is_enough=False)
+WaylandBackend().copy_html(HTML, PLAIN)
+check("still published to the owner for XWayland", "text/html" in [m for m, _ in rec.parts], True)
+check("and wl-copy sets the Wayland selection", len(rec.wl_copy_calls), 1)
+check("carrying the plain flavor, which pastes in the most places",
+      rec.wl_copy_calls[0], ["wl-copy"])
 
 print("rich text with no plain flavor stored")
 rec = install()
@@ -114,8 +131,15 @@ rec = install()
 WaylandBackend().copy_text("hello")
 check("published as text", rec.text, b"hello")
 check("digest recorded", hashlib.sha256(b"hello").hexdigest() in (rec.published or set()), True)
-check("no wl-copy alongside the owner (one authority per selection)",
+check("cosmic: no wl-copy alongside the owner (one authority per selection)",
       rec.wl_copy_calls, [])
+
+print("plain text recover off cosmic-comp (the Hyprland regression)")
+rec = install(owner_is_enough=False)
+WaylandBackend().copy_text("hello")
+check("published to the owner for XWayland", rec.text, b"hello")
+check("and wl-copy sets the Wayland selection", rec.wl_copy_calls, [["wl-copy"]])
+check("no redundant xclip mirror when the owner accepted", rec.xclip_calls, [])
 
 print("plain text recover when the owner is unavailable")
 rec = install(monkeypatch_accept=False)
