@@ -13,7 +13,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from . import APP_NAME, __version__, config
 
@@ -115,6 +115,61 @@ def auto_check(min_interval: float = 24 * 3600) -> Optional[UpdateResult]:
     return result
 
 
+# ---- how this copy of Clippy was installed ------------------------------
+# Only the .deb can be upgraded from inside the app: apt takes a single file
+# and resolves the rest. A pacman/AUR install must go through the user's own
+# package manager (installing a downloaded .deb over it would corrupt both
+# databases), and a Flatpak or source checkout updates by its own route.
+_INSTALL_SOURCE = None
+
+_UPDATE_HINTS = {
+    "pacman": "Update with your package manager:  sudo pacman -Syu clippy",
+    "flatpak": "Update with:  flatpak update io.github.davidboulay.Clippy",
+    "source": "Update with:  git pull && ./scripts/install.sh",
+}
+
+
+def install_source() -> str:
+    """How this copy was installed: 'deb', 'pacman', 'flatpak' or 'source'.
+
+    Cached — it cannot change while the process runs. Never raises.
+    """
+    global _INSTALL_SOURCE
+    if _INSTALL_SOURCE is not None:
+        return _INSTALL_SOURCE
+    _INSTALL_SOURCE = _detect_install_source()
+    return _INSTALL_SOURCE
+
+
+def _owned_by(tool: List[str]) -> bool:
+    try:
+        proc = subprocess.run(tool, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _detect_install_source() -> str:
+    if os.environ.get("FLATPAK_ID"):
+        return "flatpak"
+    module = str(config.PACKAGE_ROOT / "__init__.py")
+    if shutil.which("pacman") and _owned_by(["pacman", "-Qo", module]):
+        return "pacman"
+    if shutil.which("dpkg") and _owned_by(["dpkg", "-S", module]):
+        return "deb"
+    return "source"
+
+
+def self_install_supported() -> bool:
+    """Whether 'Update now' can actually install the new version itself."""
+    return install_source() == "deb"
+
+
+def manual_update_hint() -> str:
+    """What to tell the user to run, when we can't do it for them."""
+    return _UPDATE_HINTS.get(install_source(), "")
+
+
 def download_deb(deb_url: str, timeout: float = 180.0) -> str:
     """Download a release .deb to a temp file and return its path."""
     return _download(deb_url, ".deb", timeout)
@@ -203,7 +258,11 @@ def notify(result, on_update=None) -> None:
     latest, url = result.latest, result.url
     title = f"{APP_NAME} {latest} is available"
     body = f"You have {__version__}."
-    can_update = bool(getattr(result, "deb_url", None)) and on_update is not None
+    can_update = (
+        bool(getattr(result, "deb_url", None))
+        and on_update is not None
+        and self_install_supported()
+    )
 
     if _notify_has_actions():
         cmd = ["notify-send", "--app-name", APP_NAME, "--icon", _notify_icon()]
@@ -230,7 +289,7 @@ def notify(result, on_update=None) -> None:
     try:
         subprocess.Popen(
             ["notify-send", "--app-name", APP_NAME, "--icon", _notify_icon(), title,
-             f"{body} Open Settings → check for updates, or visit {url}"],
+              f"{body} {manual_update_hint() or f'Visit {url}'}"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )

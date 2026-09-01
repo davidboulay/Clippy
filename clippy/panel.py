@@ -397,6 +397,8 @@ class Panel:
         self._selected = -1
         self._visible = False
         self._shown_at = 0.0
+        # How many of our own popovers are open (see _track_popup).
+        self._popup_depth = 0
         self._tab = "recent"  # "recent" (unpinned) | "pinned" | <custom tab name>
         self._switching_tab = False
         self._type_filter = None  # None = all types; else a clip_types bucket key
@@ -559,6 +561,7 @@ class Panel:
         box.show_all()
         self._update_filter_checks()
         pop.add(box)
+        self._track_popup(pop)
         btn.set_popover(pop)
         return btn
 
@@ -665,6 +668,7 @@ class Panel:
         delete.connect("clicked", on_delete)
         box.pack_start(delete, False, False, 0)
 
+        self._track_popup(pop)
         pop.add(box)
         box.show_all()
         pop.popup()
@@ -753,6 +757,7 @@ class Panel:
         btn.connect("clicked", lambda _b: create())
         box.pack_start(btn, False, False, 0)
 
+        self._track_popup(pop)
         pop.add(box)
         box.show_all()
         pick(tabs.PALETTE[0])
@@ -1141,11 +1146,49 @@ class Panel:
 
     def _on_focus_out(self, _widget, _event) -> bool:
         # Click-away dismissal: when the strip loses keyboard focus (you clicked
-        # the COSMIC panel, another window, or the desktop), retract. Ignore the
-        # brief focus settle right after showing.
+        # the desktop panel, another window, or the desktop), retract. Ignore the
+        # brief focus settle right after showing, and any focus we lost to one of
+        # our own popovers.
+        if self._popup_depth:
+            return False
         if self._visible and (time.monotonic() - self._shown_at) > 0.25:
             self.hide()
         return False
+
+    # -- popovers ---------------------------------------------------------
+    def _track_popup(self, pop) -> None:
+        """Keep the panel up while one of its own popovers is.
+
+        A modal Gtk.Popover takes the keyboard grab, and wlroots compositors
+        hand that over by sending our layer surface a focus-out -- which
+        _on_focus_out reads as a click-away and retracts the panel out from
+        under the menu the user just opened. On Hyprland that made the tab
+        picker unusable: click the star, the picker appears, the panel closes
+        under it before you can choose a list. cosmic-comp does not move the
+        grab that way, which is why this never showed up there.
+
+        So suppress dismissal while a popover is up, and take the keyboard grab
+        back when it closes -- otherwise the panel goes on running without the
+        focus it needs and can never be dismissed by clicking away again.
+        """
+        pop.connect("show", self._on_popup_shown)
+        pop.connect("closed", self._on_popup_closed)
+
+    def _on_popup_shown(self, _pop) -> None:
+        self._popup_depth += 1
+
+    def _on_popup_closed(self, _pop) -> None:
+        self._popup_depth = max(0, self._popup_depth - 1)
+        if self._popup_depth or not self._visible:
+            return
+        # The same grab dance as show(): EXCLUSIVE to reclaim the keyboard
+        # unconditionally, re-arm the settle window so the blip is not read as a
+        # click-away, then relax so real click-away works again.
+        GtkLayerShell.set_keyboard_mode(
+            self.window, GtkLayerShell.KeyboardMode.EXCLUSIVE
+        )
+        self._shown_at = time.monotonic()
+        GLib.timeout_add(180, self._relax_keyboard)
 
     def delete_entry(self, entry_id: int) -> None:
         storage.delete(entry_id)
@@ -1214,6 +1257,7 @@ class Panel:
             row.add(lbl)
             row.connect("clicked", self._on_picker_pick, pop, entry_id, dest)
             box.pack_start(row, False, False, 0)
+        self._track_popup(pop)
         pop.add(box)
         box.show_all()
         pop.popup()

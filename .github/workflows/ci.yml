@@ -54,6 +54,9 @@ jobs:
       - name: X11 takeover gate
         run: PYTHONPATH=. python scripts/x11_takeover_gate_test.py
 
+      - name: Desktop integration (shortcut round-trips, Omarchy theme parsing)
+        run: PYTHONPATH=. python scripts/desktops_test.py
+
       - name: Sync core self-test
         run: PYTHONPATH=. python scripts/sync_selftest.py
 

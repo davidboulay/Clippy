@@ -1,22 +1,66 @@
 #!/usr/bin/env bash
 # Installs system dependencies, a launcher, autostart, and the icon, then
 # starts the Clippy daemon and prints how to set a shortcut.
+#
+# This is the source install, for running Clippy straight from a checkout on
+# any Wayland distro. If your distro has a package, prefer it:
+#   Debian/Ubuntu/Pop!_OS   make deb    (or the APT repo -- see the README)
+#   Arch/Omarchy            make arch
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$HOME/.local/bin/clippy"
 
 echo "==> [1/5] Installing system dependencies (sudo required)"
-sudo apt-get update
-sudo apt-get install -y \
-    wl-clipboard \
-    python3-gi \
-    gir1.2-gtk-3.0 \
-    gir1.2-gtklayershell-0.1 \
-    libgtk-layer-shell0 \
-    gir1.2-ayatanaappindicator3-0.1 \
-    libayatana-appindicator3-1 \
-    pipewire-bin
+if command -v pacman >/dev/null 2>&1; then
+    # Arch, Omarchy, Manjaro, EndeavourOS.
+    sudo pacman -S --needed --noconfirm \
+        wl-clipboard \
+        python-gobject \
+        gtk3 \
+        gtk-layer-shell \
+        libayatana-appindicator \
+        libnotify \
+        pipewire
+    # LAN sync is optional; don't fail the whole install if it can't be had.
+    sudo pacman -S --needed --noconfirm \
+        python-pynacl python-zeroconf python-spake2 \
+        || echo "    WARN: sync deps unavailable; LAN sync will stay off"
+elif command -v apt-get >/dev/null 2>&1; then
+    # Debian, Ubuntu, Pop!_OS.
+    sudo apt-get update
+    sudo apt-get install -y \
+        wl-clipboard \
+        python3-gi \
+        gir1.2-gtk-3.0 \
+        gir1.2-gtklayershell-0.1 \
+        libgtk-layer-shell0 \
+        gir1.2-ayatanaappindicator3-0.1 \
+        libayatana-appindicator3-1 \
+        libnotify-bin \
+        pipewire-bin
+    sudo apt-get install -y python3-nacl python3-zeroconf \
+        || echo "    WARN: sync deps unavailable; LAN sync will stay off"
+elif command -v dnf >/dev/null 2>&1; then
+    # Fedora and friends.
+    sudo dnf install -y \
+        wl-clipboard \
+        python3-gobject \
+        gtk3 \
+        gtk-layer-shell \
+        libayatana-appindicator-gtk3 \
+        libnotify \
+        pipewire-utils
+    sudo dnf install -y python3-pynacl python3-zeroconf \
+        || echo "    WARN: sync deps unavailable; LAN sync will stay off"
+else
+    echo "    No supported package manager found (pacman/apt-get/dnf)."
+    echo "    Install these yourself, then re-run:"
+    echo "      wl-clipboard, PyGObject, GTK 3, gtk-layer-shell,"
+    echo "      libayatana-appindicator, libnotify"
+    echo "    Optional, for LAN sync: PyNaCl, zeroconf, spake2"
+    exit 1
+fi
 
 echo "==> [2/5] Verifying GTK + layer-shell bindings"
 python3 - <<'PY'
@@ -66,6 +110,7 @@ echo "    daemon started (log: /tmp/clippy.log)"
 
 echo
 echo "============================================================"
-echo "Done. A paperclip icon should appear in your COSMIC panel."
-echo "Open it → Settings to pick your shortcut (e.g. Super+V),"
-echo "or run:  clippy setup-shortcut"
+"$BIN" status || true
+echo
+echo "A paperclip should appear in your panel's tray. Open it → Settings"
+echo "to pick a shortcut, or run:  clippy setup-shortcut"

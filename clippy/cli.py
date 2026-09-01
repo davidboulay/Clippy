@@ -249,6 +249,19 @@ def _cmd_status() -> int:
     pinned = sum(1 for e in entries if e.pinned)
     print(f"daemon:  {'running' if running else 'stopped'}")
     print(f"history: {len(entries)} items ({pinned} pinned)")
+
+    from . import setup
+    desktop = setup.shortcut_backend()
+    combo = setup.read_shortcut()
+    if combo:
+        shown = "+".join(combo[0] + [combo[1].upper() if len(combo[1]) == 1
+                                     else combo[1]])
+    elif desktop.can_bind():
+        shown = "not set (run `clippy setup-shortcut`)"
+    else:
+        shown = "set it in your desktop (run `clippy setup-shortcut`)"
+    print(f"desktop: {desktop.label}")
+    print(f"shortcut: {shown}")
     return 0
 
 
@@ -264,7 +277,7 @@ def _cmd_clear(include_pinned: bool) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="clippy", description="Clipboard history panel for Wayland/COSMIC."
+        prog="clippy", description="Clipboard history panel for Wayland and macOS."
     )
     sub = parser.add_subparsers(dest="command")
 

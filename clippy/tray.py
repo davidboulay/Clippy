@@ -1,7 +1,7 @@
 """System-tray (StatusNotifierItem) icon via Ayatana AppIndicator.
 
-COSMIC's status-area applet hosts SNI items, so the paperclip shows in the
-panel — never the dock. If the AppIndicator bindings aren't present the daemon
+Any SNI host shows the paperclip in the panel and never the dock — COSMIC's
+status-area applet, Omarchy's `omarchy.tray` bar widget, Waybar's `tray`. If the AppIndicator bindings aren't present the daemon
 still works (open the panel via the shortcut; settings via the panel's ⚙).
 """
 from __future__ import annotations

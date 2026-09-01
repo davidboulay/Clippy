@@ -1,26 +1,18 @@
-"""Follow the COSMIC theme and generate matching GTK CSS.
+"""Follow the desktop theme and generate matching GTK CSS.
 
-COSMIC records the active mode in ``…/CosmicTheme.Mode/v1/is_dark`` and the
-palette in ``…/CosmicTheme.{Dark,Light}/v1/<key>`` files (RON structs whose
-``base: (red, green, blue, alpha)`` floats we parse). We pull the real
-background and accent so the panel matches the system, and fall back to a
-sensible built-in palette if parsing fails.
+Where the colors come from is the desktop's business (see
+``clippy/desktops/``): COSMIC parses its RON theme files, Omarchy reads the
+active theme's ``colors.toml``, and anything else falls back to the XDG portal
+for dark/light only. This module just turns whatever semantic colors arrive
+into Clippy's CSS, filling the gaps from a built-in palette.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List
 
-from . import config, settings
-
-_MODE_FILE = config.HOME / ".config/cosmic/com.system76.CosmicTheme.Mode/v1/is_dark"
-
-_BASE_RE = re.compile(
-    r"base:\s*\(\s*red:\s*([0-9.]+),\s*green:\s*([0-9.]+),"
-    r"\s*blue:\s*([0-9.]+),\s*alpha:\s*([0-9.]+)",
-    re.DOTALL,
-)
+from . import settings
+from .desktops import get_desktop
 
 _DARK = {
     "bg": "rgba(28, 29, 34, 0.96)",
@@ -64,11 +56,8 @@ _LIGHT = {
 
 
 def is_dark() -> bool:
-    """The system (COSMIC) dark/light state."""
-    try:
-        return _MODE_FILE.read_text(encoding="utf-8").strip().lower() != "false"
-    except OSError:
-        return True
+    """The desktop's dark/light state."""
+    return get_desktop().is_dark()
 
 
 def resolve_dark() -> bool:
@@ -81,19 +70,10 @@ def resolve_dark() -> bool:
     return is_dark()
 
 
-def _cosmic_dir(dark: bool) -> Path:
-    name = "Dark" if dark else "Light"
-    return config.HOME / f".config/cosmic/com.system76.CosmicTheme.{name}/v1"
-
-
-def _first_base(path: Path) -> Optional[Tuple[float, float, float, float]]:
-    try:
-        m = _BASE_RE.search(path.read_text(encoding="utf-8"))
-    except OSError:
-        return None
-    if not m:
-        return None
-    return tuple(float(x) for x in m.groups())  # type: ignore[return-value]
+def theme_paths() -> List[Path]:
+    """Paths whose change means the desktop theme changed (for the daemon's
+    watcher)."""
+    return get_desktop().theme_paths()
 
 
 def _rgb(c) -> str:
@@ -106,16 +86,16 @@ def _rgba(c, a: float) -> str:
 
 def _palette(dark: bool) -> dict:
     c = dict(_DARK if dark else _LIGHT)
-    base = _cosmic_dir(dark)
-    accent = _first_base(base / "accent")
-    bg = _first_base(base / "background")
-    primary = _first_base(base / "primary")
-    destructive = _first_base(base / "destructive")
+    try:
+        theme = get_desktop().palette(dark)
+    except Exception:
+        theme = {}
 
+    bg = theme.get("background")
     if bg:
         c["bg"] = _rgba(bg, 0.97)
         # Derive text/border/field shades from the real background luminance
-        # so contrast matches COSMIC in either mode.
+        # so contrast matches the desktop in either mode.
         lum = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
         if lum < 0.5:
             c.update(text="#f3f4f6", dim="rgba(255,255,255,0.55)",
@@ -127,16 +107,26 @@ def _palette(dark: bool) -> dict:
                      dim2="rgba(0,0,0,0.40)", border="rgba(0,0,0,0.12)",
                      field="rgba(0,0,0,0.05)", field_hover="rgba(0,0,0,0.09)",
                      backdrop="rgba(0,0,0,0.25)")
-    if primary:
-        c["tile"] = _rgb(primary)
+    # A desktop that names its own body text (Omarchy does) beats the shade we
+    # just derived; the dim variants stay derived, since they have no source.
+    fg = theme.get("foreground")
+    if fg:
+        c["text"] = _rgb(fg)
+    if theme.get("surface"):
+        c["tile"] = _rgb(theme["surface"])
+    accent = theme.get("accent")
     if accent:
         c["accent"] = _rgb(accent)
         c["accent_soft"] = _rgba(accent, 0.20)
         c["tile_hover"] = _rgba(accent, 0.10)
         c["badge_text_fg"] = _rgb(accent)
         c["badge_text_bg"] = _rgba(accent, 0.20)
-    if destructive:
-        c["danger"] = _rgb(destructive)
+    if theme.get("danger"):
+        c["danger"] = _rgb(theme["danger"])
+    warning = theme.get("warning")
+    if warning:
+        c["badge_img_fg"] = _rgb(warning)
+        c["badge_img_bg"] = _rgba(warning, 0.20)
     return c
 
 
@@ -275,7 +265,7 @@ def build_css(dark: bool | None = None) -> str:
     min-width: 0;
 }}
 
-/* COSMIC-like scrollbar: a slim, rounded, theme-adaptive bar (no stepper
+/* A slim, rounded, theme-adaptive scrollbar (no stepper
    arrows, transparent trough). The 3px transparent border + padding-box clip
    keeps the visible slider thin while leaving an easy grab target; colours come
    from the live palette so it follows light/dark. */

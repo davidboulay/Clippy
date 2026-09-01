@@ -1,46 +1,77 @@
 # Maintainer: David Boulay <89959743+davidboulay@users.noreply.github.com>
-# Builds Clippy from the local repository tree (run `makepkg` from this dir).
+# Builds Clippy from the local repository tree (run `makepkg` from this dir,
+# or `make arch` from the repo root).
 pkgname=clippy
-pkgver=0.2.5
+pkgver=1.6.0
 pkgrel=1
-pkgdesc="Clipboard history panel for Wayland (COSMIC/wlroots)"
+pkgdesc="Clipboard history panel for Wayland (Hyprland/Omarchy, COSMIC, wlroots)"
 arch=('any')
 url="https://github.com/davidboulay/Clippy"
 license=('MIT')
-depends=('python' 'python-gobject' 'gtk3' 'gtk4' 'gtk-layer-shell'
+depends=('python' 'python-gobject' 'gtk3' 'gtk-layer-shell'
          'libayatana-appindicator' 'wl-clipboard')
-optdepends=('pipewire: copy sound effect (pw-play)'
+optdepends=('python-pynacl: encrypted LAN clipboard sync'
+            'python-zeroconf: peer discovery for LAN sync'
+            'python-spake2: pairing handshake for LAN sync'
+            'libnotify: update and pairing notifications'
+            'pipewire: copy sound effect (pw-play)'
             'libpulse: copy sound effect (paplay)'
-            'xclip: paste images/files into XWayland apps')
+            'ffmpeg: video clip thumbnails'
+            'xclip: paste images/files into XWayland apps'
+            'gtk4: XWayland clipboard takeover fallback')
+options=('!strip')
+install=clippy.install
 
-_repo="$startdir/../.."
+_repo="$(cd "$startdir/../.." && pwd)"
+
+# The package tree is not on sys.path: it goes to /usr/lib/clippy and the
+# launcher puts that on PYTHONPATH. Installing into site-packages would bake in
+# the current python3.X directory, and every Python minor bump in Arch would
+# silently break the app until a rebuild.
+_libdir="/usr/lib/$pkgname"
 
 package() {
-    local site
-    site="$(python3 -c 'import site; print(site.getsitepackages()[0])')"
-    install -dm755 "$pkgdir$site"
-    cp -r "$_repo/clippy" "$pkgdir$site/clippy"
-    find "$pkgdir$site/clippy" -name '__pycache__' -type d -prune -exec rm -rf {} + || true
+    install -dm755 "$pkgdir$_libdir"
+    cp -r "$_repo/clippy" "$pkgdir$_libdir/clippy"
+    # Never ship build leftovers or the macOS-only halves of the tree.
+    find "$pkgdir$_libdir/clippy" -name '__pycache__' -type d -prune -exec rm -rf {} + || true
+    rm -f "$pkgdir$_libdir/clippy"/mac_*.py
 
-    install -Dm755 /dev/stdin "$pkgdir/usr/bin/clippy" <<'EOF'
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/$pkgname" <<EOF
 #!/bin/sh
-exec python3 -m clippy "$@"
+# Clippy launcher: the package lives outside site-packages on purpose.
+PYTHONPATH="$_libdir\${PYTHONPATH:+:\$PYTHONPATH}"
+export PYTHONPATH
+exec python3 -m clippy "\$@"
 EOF
 
-    for s in 16 24 32 48 64 128 256 512; do
-        install -dm755 "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps"
-        python3 - "$_repo/clippy/icons/clippy.png" \
-            "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/clippy.png" "$s" <<'PY'
-import sys, gi
-gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import GdkPixbuf
-s = int(sys.argv[3])
-GdkPixbuf.Pixbuf.new_from_file_at_scale(sys.argv[1], s, s, True).savev(sys.argv[2], "png", [], [])
-PY
-    done
+    # Ship the scalable icon plus the 512px master, and let the icon theme do
+    # the sizing. Rasterising here instead would need GdkPixbuf, whose loaders
+    # are sandboxed with bwrap on current Arch and cannot start under fakeroot.
+    install -Dm644 "$_repo/docs/clippy.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/clippy.svg"
+    install -Dm644 "$_repo/clippy/icons/clippy.png" \
+        "$pkgdir/usr/share/icons/hicolor/512x512/apps/clippy.png"
 
-    install -Dm644 "$_repo/packaging/flatpak/io.github.davidboulay.Clippy.desktop" \
-        "$pkgdir/usr/share/applications/clippy.desktop"
-    sed -i 's/^Icon=.*/Icon=clippy/' "$pkgdir/usr/share/applications/clippy.desktop"
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/$pkgname.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Clippy
+GenericName=Clipboard Manager
+Comment=Show your clipboard history
+Exec=/usr/bin/clippy toggle
+Icon=clippy
+Terminal=false
+Categories=Utility;GTK;
+Keywords=clipboard;history;paste;copy;
+StartupNotify=false
+Actions=Settings;
+
+[Desktop Action Settings]
+Name=Settings
+Exec=/usr/bin/clippy settings
+EOF
+
     install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 "$_repo/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

@@ -1,0 +1,20 @@
+post_install() {
+    cat <<'EOF'
+
+Clippy is installed. To finish setting it up:
+
+  clippy daemon &            # start it now (autostarts after the first launch)
+  clippy setup-shortcut      # how to bind a key on your desktop
+
+On Omarchy/Hyprland, Settings → shortcut picker writes the binding for you
+into ~/.config/hypr/bindings.lua. Check the key is free first with
+`omarchy menu keybindings --print` — SUPER+V and SUPER+CTRL+V are taken.
+
+EOF
+}
+
+post_upgrade() {
+    # The running daemon keeps the old code until it is restarted. Say so
+    # rather than killing it -- a silent kill would stop capturing clips.
+    echo "Clippy updated. Restart the daemon to pick it up:  clippy quit && clippy daemon &"
+}
