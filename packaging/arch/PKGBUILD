@@ -2,7 +2,7 @@
 # Builds Clippy from the local repository tree (run `makepkg` from this dir,
 # or `make arch` from the repo root).
 pkgname=clippy
-pkgver=1.5.2
+pkgver=1.6.0
 pkgrel=1
 pkgdesc="Clipboard history panel for Wayland (Hyprland/Omarchy, COSMIC, wlroots)"
 arch=('any')
