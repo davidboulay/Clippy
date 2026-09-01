@@ -29,7 +29,7 @@ between machines — including between Linux and macOS.
 
 <img src="docs/screenshot-cosmic.jpg" alt="Clippy on Linux: the tile strip across the bottom of a COSMIC desktop, showing text, image, video and file clips with type badges, tab bar and shortcut hints">
 
-<sub>**Linux** — Wayland / COSMIC. Custom tabs, type badges, and the shortcut bar along the bottom.</sub>
+<sub>**Linux** — Wayland, here on COSMIC. Custom tabs, type badges, and the shortcut bar along the bottom. The panel looks the same on Hyprland/Omarchy, in that desktop's own theme colours.</sub>
 
 <img src="docs/screenshot-macos.png" alt="Clippy on macOS: the same tile strip over the desktop, showing clips synced from the Linux machine">
 
@@ -66,8 +66,10 @@ The same panel and history engine run on both platforms:
 
 Each platform integrates natively:
 
-- **Linux:** a system-tray paperclip, automatic **COSMIC shortcut binding**, and
-  a full-screen click-away overlay.
+- **Linux:** a system-tray paperclip, a full-screen click-away overlay, and a
+  shortcut Clippy **binds for you** in your desktop's own config — COSMIC's
+  custom shortcuts, or Hyprland/Omarchy's `bindings.lua`. It follows that
+  desktop's light/dark mode *and* its palette.
 - **macOS:** a menubar paperclip, **QuickLook** thumbnails, and the **icon of the
   app each clip came from** on every tile (a Wayland security boundary makes that
   last one macOS-only — see [Limitations](#limitations)).
@@ -80,8 +82,13 @@ Built for **Wayland** — developed on **Pop!_OS 24.04 + COSMIC** and
 **Omarchy 4 (Arch + Hyprland)**, and also works on Sway and other wlroots
 compositors.
 
-**Ubuntu / Pop!_OS / Debian — APT repository (recommended)** — add the repo once,
-then install and get updates with `apt` like any system package:
+Clippy is packaged for two families. Both are first-class; they differ only in
+how mature the distribution channel is.
+
+#### Debian / Ubuntu / Pop!_OS
+
+**APT repository (recommended)** — add it once, then install and update with
+`apt` like any system package:
 
 ```bash
 curl -fsSL https://davidboulay.github.io/Clippy/clippy.gpg | sudo tee /usr/share/keyrings/clippy.gpg >/dev/null
@@ -90,9 +97,7 @@ sudo apt update && sudo apt install clippy
 ```
 
 New versions then arrive with `sudo apt upgrade`. The repo is GPG-signed and
-served over GitHub Pages.
-
-**Or grab the `.deb` directly** from the
+served over GitHub Pages. Or grab the `.deb` directly from the
 **[Releases page](https://github.com/davidboulay/clippy/releases/latest)**:
 
 ```bash
@@ -100,40 +105,54 @@ gh release download --repo davidboulay/clippy --pattern '*.deb'
 sudo apt install ./clippy_*.deb
 ```
 
-`apt` pulls in the dependencies. Then launch **Clippy** from your app list, open
-**Settings**, and bind a shortcut (see [below](#set-the-linux-shortcut)).
+#### Arch / Omarchy / Manjaro
 
-**Arch / Omarchy / Manjaro** — build and install the package from the tree:
+There is no published binary package or AUR entry yet, so build it from the
+tree — `makepkg` does the work and `pacman` resolves the dependencies:
 
 ```bash
 git clone https://github.com/davidboulay/Clippy.git && cd Clippy
-make arch                                            # -> packaging/arch/clippy-<ver>-any.pkg.tar.zst
+make arch                                    # → packaging/arch/clippy-<ver>-any.pkg.tar.zst
 sudo pacman -U packaging/arch/clippy-*.pkg.tar.zst
 ```
 
-`pacman` pulls the dependencies; the optional ones (LAN sync, sounds,
-thumbnails) are listed as `optdepends` — install them with
-`sudo pacman -S python-pynacl python-zeroconf python-spake2`. Update later by
-rebuilding, or with your AUR helper once the package is published.
+Everything Clippy needs is in the official repos — nothing from the AUR. The
+package is `arch=('any')`: it installs to `/usr/lib/clippy` rather than
+site-packages, so an Arch Python minor bump can't break it.
 
-**Other distributions**
+Optional features are `optdepends`, left out of a minimal install. For LAN sync:
 
-- **AppImage** (experimental, any distro): `make appimage`, then run `dist/Clippy-*.AppImage`
-- **From source:** `git clone … && cd clippy && ./scripts/install.sh` — installs
-  deps, a `~/.local/bin/clippy` launcher + icon, enables autostart, and starts
-  the daemon. Build a `.deb` instead with `make deb` (see
-  [`packaging/README.md`](packaging/README.md)).
+```bash
+sudo pacman -S python-pynacl python-zeroconf python-spake2
+```
+
+**Updating:** rebuild and `pacman -U` again. Clippy will *not* try to update
+itself here — it detects a pacman install and shows the command to run instead
+of an install button, because driving `apt` over a pacman install would corrupt
+both package databases.
+
+#### Other distributions
+
+- **From source (any Wayland distro):** `git clone … && cd Clippy && ./scripts/install.sh`
+  — detects `pacman`, `apt-get` or `dnf`, installs the dependencies, drops a
+  `~/.local/bin/clippy` launcher + icon, enables autostart and starts the daemon.
+- **AppImage** (experimental): `make appimage`, then run `dist/Clippy-*.AppImage`.
 - **Flatpak / COSMIC Store:** ❌ not viable — COSMIC withholds the privileged
   `layer-shell` and `data-control` Wayland protocols from Flatpak-sandboxed apps,
   which Clippy requires. Details in [`FLATHUB.md`](FLATHUB.md).
 
-Dependencies (handled by the `.deb`): `wl-clipboard`, `python3-gi`,
-`gir1.2-gtk-3.0`, `gir1.2-gtklayershell-0.1`, `libgtk-layer-shell0`,
-`gir1.2-ayatanaappindicator3-0.1`, `libayatana-appindicator3-1`, `pipewire-bin`,
-plus `python3-nacl` + `python3-zeroconf` + `python3-spake2` for sync (`poppler-utils` for PDF
-thumbnails — pulled in via Recommends; `ffmpeg` optional for video thumbnails;
-`xclip` optional — a fallback for reaching XWayland apps when the GTK 4 owner
-can't start).
+#### Dependencies
+
+Your package manager handles these; the list is here for source installs.
+
+| | Arch | Debian / Ubuntu |
+|---|---|---|
+| **Required** | `python-gobject` `gtk3` `gtk-layer-shell` `libayatana-appindicator` `wl-clipboard` | `python3-gi` `gir1.2-gtk-3.0` `gir1.2-gtklayershell-0.1` `libgtk-layer-shell0` `gir1.2-ayatanaappindicator3-0.1` `libayatana-appindicator3-1` `wl-clipboard` |
+| **LAN sync** | `python-pynacl` `python-zeroconf` `python-spake2` | `python3-nacl` `python3-zeroconf` `python3-spake2` |
+| **Copy sound** | `pipewire` or `libpulse` | `pipewire-bin` or `pulseaudio-utils` |
+| **Notifications** | `libnotify` | `libnotify-bin` |
+| **Thumbnails** | `ffmpeg` (video), `poppler` (PDF) | `ffmpeg`, `poppler-utils` |
+| **XWayland paste fallback** | `xclip`, `gtk4` | `xclip`, `libgtk-4-1` |
 
 #### Set the Linux shortcut
 
@@ -186,14 +205,15 @@ See [`packaging/macos/README.md`](packaging/macos/README.md).
 **Updating:** open **Settings → Check for updates**. When a newer release exists
 the button becomes **Download \<version\>** — clicking it downloads the new
 `.dmg`, swaps the app in place, and relaunches automatically (no manual
-re-download or drag). The Linux `.deb` updates the same way via *Settings →
-Check for updates*.
+re-download or drag). A Linux `.deb` install updates the same way via *Settings
+→ Check for updates*; a pacman or source install shows the command to run
+instead, since only the `.deb` can be upgraded safely from inside the app.
 
 ## Using the panel
 
 | Action | Linux | macOS |
 |---|---|---|
-| Open / close the panel | your COSMIC shortcut | <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> |
+| Open / close the panel | your shortcut (see [above](#set-the-linux-shortcut)) | <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>V</kbd> |
 | Search history | type | type |
 | Move between tiles | <kbd>←</kbd>/<kbd>→</kbd>/<kbd>↑</kbd>/<kbd>↓</kbd> | <kbd>←</kbd>/<kbd>→</kbd> |
 | Copy selected & close | <kbd>Enter</kbd> | <kbd>Enter</kbd> |
@@ -274,10 +294,10 @@ not, so the Linux side uses the native Wayland protocols.
 |------|-----------------|-------|
 | Panel pinned to the screen edge | **wlr-layer-shell** (`gtk-layer-shell`) | borderless **NSPanel** at pop-up-menu window level |
 | Watch the clipboard | **`wl-paste --watch`** (`ext-data-control`) | **`NSPasteboard`** polling |
-| Global hotkey | a **COSMIC custom shortcut** running `clippy toggle` | **Carbon `RegisterEventHotKey`** (⌘⇧V) |
+| Global hotkey | a **desktop shortcut** running `clippy toggle`, written by Clippy into COSMIC's or Hyprland's config | **Carbon `RegisterEventHotKey`** (⌘⇧V) |
 | Menubar / tray presence | **StatusNotifierItem** (Ayatana AppIndicator) | **`NSStatusItem`** |
 | UI toolkit | **GTK 3** (PyGObject) | **AppKit** (PyObjC) |
-| Theme | reads COSMIC's `is_dark` | `NSAppearance` light/dark |
+| Theme | the desktop's own palette — COSMIC's theme files, Omarchy's `colors.toml`, else the XDG portal | `NSAppearance` light/dark |
 | Storage | **SQLite** + files under `~/.local/share/clippy` | same (shared core) |
 
 On Linux, one binary plays several roles:
@@ -310,8 +330,10 @@ dir (macOS):
 
 Preferences live in `settings.json` (Linux: `~/.config/clippy/`), edited via the
 Settings window. Fixed limits/geometry are in `clippy/config.py`. On Linux,
-`./scripts/uninstall.sh --purge` removes everything, and a backup of your COSMIC
-shortcuts is kept the first time Clippy edits them.
+`./scripts/uninstall.sh --purge` removes everything. Clippy keeps a one-time
+backup the first time it edits COSMIC's shortcuts, and on Hyprland it confines
+itself to a marked block, so removing the shortcut leaves the rest of your
+config byte-identical.
 
 ## When a clip won't paste
 
@@ -344,6 +366,13 @@ Two things are worth knowing before reading the output:
   by writing the Wayland selection itself. See
   [`docs/cosmic-comp-clipboard-bug.md`](docs/cosmic-comp-clipboard-bug.md) for
   the analysis and a standalone reproducer.
+- **Which compositor you're on changes the clipboard path.** cosmic-comp mirrors
+  the regular selection into `data-control` but not back out, so there Clippy
+  reaches native-Wayland apps by owning the *X11* selection and letting Xwayland
+  re-expose it. Every other compositor bridges its own selections, so Clippy
+  writes the Wayland selection with `wl-copy` and uses the X11 owner only for
+  XWayland. `clippy status` prints the desktop it detected; getting this wrong
+  is what made a clicked tile silently set nothing on Hyprland before 1.6.0.
 
 ## Limitations
 
@@ -354,12 +383,18 @@ Two things are worth knowing before reading the output:
   without you having to pick "Copy as plain text". Set `always_plain_text` in
   Settings if you'd rather formatting were never restored.
 - **Linux** needs a compositor with `wlr-layer-shell` **and**
-  `ext-/wlr-data-control` (COSMIC, Sway, Hyprland); a plain GNOME Wayland session
+  `ext-/wlr-data-control` (COSMIC, Hyprland, Sway); a plain GNOME Wayland session
   lacks layer-shell. The panel appears on the active output.
+- **Rich text pastes as plain text off cosmic-comp.** A restored clip has to
+  offer `text/html` and plain text at once, and `wl-copy` carries one type per
+  invocation — so on Hyprland and friends Clippy serves the plain flavour, which
+  pastes everywhere. XWayland apps still get both. On COSMIC, where the
+  multi-flavour X11 owner *is* the Wayland selection, formatting is preserved.
+  Lifting this needs a Wayland-backend twin of the `x11clip` helper.
 - **Source-app icons are macOS-only.** macOS records the frontmost app at copy
   time and shows its icon on each tile. Wayland deliberately denies apps any way
   to query the active/foreground window or its app id (a security boundary), and
-  there is no COSMIC portal for it — so this can't be supported in a Wayland
+  no desktop portal exposes it — so this can't be supported in a Wayland
   session. The Linux tiles show the clip's type badge instead.
 - **macOS** builds are ad-hoc signed (no Developer ID), so Gatekeeper shows
   "unidentified developer" on first launch.
