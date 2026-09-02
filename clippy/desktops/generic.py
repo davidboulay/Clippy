@@ -90,6 +90,14 @@ class GenericDesktop:
         # XWayland. Hyprland inherits this.
         return False
 
+    # -- panel quirks -----------------------------------------------------
+    def focus_out_means_click_away(self) -> bool:
+        # No: assume a wlroots-style compositor, where keyboard focus follows
+        # the mouse and window activation rather than the user's intent, and
+        # the panel is better off catching the click itself. Hyprland inherits
+        # this.
+        return False
+
     # -- theme ------------------------------------------------------------
     def is_dark(self) -> bool:
         scheme = _portal_color_scheme()

@@ -236,6 +236,16 @@ instead, since only the `.deb` can be upgraded safely from inside the app.
 Selecting a tile sets the clipboard — then paste with <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd>
 yourself (Clippy never injects keystrokes).
 
+"Click away" works differently per compositor, and it shows. On cosmic-comp the
+panel is a bottom strip that leaves the rest of the screen live: it closes when
+your click moves the keyboard focus, and that click still lands where you aimed
+it. On wlroots compositors (Hyprland/Omarchy) focus is no signal — it follows
+the mouse and it follows window activation, so a panel that trusted it vanished
+when the pointer merely crossed a window and stayed put when you clicked the
+window that already had focus. There the panel covers the screen instead,
+invisible except for the strip, and reads the click itself — so the click that
+dismisses it is consumed, and the bar is not clickable while it is open.
+
 ## Cross-device clipboard sync
 
 ### Why it exists, and who it's for
