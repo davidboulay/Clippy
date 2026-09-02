@@ -139,6 +139,11 @@ def build_css(dark: bool | None = None) -> str:
 
 .backdrop {{ background-color: {c['backdrop']}; }}
 
+/* The full-screen click catcher behind the strip (see panel.py): it is
+   there to be clicked, not to be seen, so the panel looks the same as the
+   non-modal strip does. */
+.click-catcher {{ background-color: transparent; }}
+
 .panel-body {{
     background-color: {c['bg']};
     border-top: 1px solid {c['border']};

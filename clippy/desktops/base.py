@@ -97,6 +97,29 @@ class Desktop(Protocol):
         """
         ...
 
+    # -- panel quirks -----------------------------------------------------
+    def focus_out_means_click_away(self) -> bool:
+        """Whether the panel losing keyboard focus means the user clicked away.
+
+        This one answer decides how the panel opens *and* how it closes.
+
+        True (cosmic-comp): the panel is a bottom strip that leaves the rest of
+        the screen alone, grabs the keyboard as it maps -- cosmic-comp won't
+        hand focus to a layer surface mapped from a menu -- relaxes that grab a
+        moment later, and hides when focus goes elsewhere. The click that
+        dismisses it still reaches the window you clicked.
+
+        False (wlroots, so Hyprland): focus there says nothing about intent.
+        With focus-follows-mouse it leaves as the pointer crosses a window and
+        the panel vanishes untouched; a click on the window that already had
+        focus moves none at all, so the panel never goes away. Re-setting the
+        interactivity to relax a grab loses the focus we had on map, on top of
+        it. So the panel covers the screen instead and reads the click-away off
+        its own transparent surface, and that click is consumed rather than
+        passed on.
+        """
+        ...
+
     # -- theme ------------------------------------------------------------
     def is_dark(self) -> bool:
         """The desktop's current dark/light state."""

@@ -138,6 +138,14 @@ class CosmicDesktop:
         # how a recovered clip reaches native-Wayland apps. See x11clip.
         return True
 
+    # -- panel quirks -----------------------------------------------------
+    def focus_out_means_click_away(self) -> bool:
+        # Yes: cosmic-comp moves keyboard focus when the user clicks, and only
+        # then, so the panel can stay a non-modal strip and read click-away off
+        # focus. It won't hand focus to a layer surface mapped from a menu
+        # though, so the panel grabs the keyboard as it opens (see _grab_keyboard).
+        return True
+
     # -- theme ------------------------------------------------------------
     def is_dark(self) -> bool:
         try:

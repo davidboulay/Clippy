@@ -1,6 +1,10 @@
 """Clippy's panel: a clipboard-tile strip anchored to the bottom of the screen
-via wlr-layer-shell, shown as a full-screen overlay so clicking away dismisses
-it. Only this module (and tray/settings_window) imports GTK.
+via wlr-layer-shell. Only this module (and tray/settings_window) imports GTK.
+
+Clicking away dismisses it, by one of two mechanisms the compositor decides
+between (see Desktop.focus_out_means_click_away): watching for the keyboard
+focus to leave, or a transparent full-screen surface behind the strip that
+catches the click itself.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, GtkLayerShell, Pango  # noqa: E402
 
 from . import clip_types, clipboard, config, settings, storage, tabs
+from .desktops import get_desktop
 from .storage import Entry
 
 # Opening cost scales with the number of tiles built (each image tile decodes a
@@ -382,6 +387,13 @@ class Tile(Gtk.EventBox):
 class Panel:
     def __init__(self, controller):
         self._controller = controller
+        # How this panel learns you clicked away — the layer-shell anchoring,
+        # the keyboard grab and the dismissal path all follow from it.
+        try:
+            self._focus_dismiss = bool(get_desktop().focus_out_means_click_away())
+        except Exception:
+            self._focus_dismiss = False
+
         self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
         self.window.set_app_paintable(True)
         self.window.get_style_context().add_class("clippy-overlay")
@@ -419,12 +431,25 @@ class Panel:
         self._thumb_pending: set = set()
         self._thumb_reload_scheduled = False
 
-        # Non-modal bottom strip: the window *is* the panel (no full-screen
-        # backdrop), so the COSMIC panel and other apps stay clickable. Click-
-        # away dismissal is handled by hiding on focus-out (see _on_focus_out).
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         body.get_style_context().add_class("panel-body")
-        self.window.add(body)
+        if self._focus_dismiss:
+            # Non-modal bottom strip: the window *is* the panel, so the COSMIC
+            # panel and other apps stay clickable, and clicking one of them
+            # dismisses us by taking the keyboard focus (see _on_focus_out).
+            self.window.add(body)
+        else:
+            # Where focus is no guide, the panel catches the click itself: the
+            # surface covers the screen and everything above the strip is a
+            # transparent click target that hides us (see _on_backdrop_click).
+            outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            catcher = Gtk.EventBox()
+            catcher.get_style_context().add_class("click-catcher")
+            catcher.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+            catcher.connect("button-press-event", self._on_backdrop_click)
+            outer.pack_start(catcher, True, True, 0)
+            outer.pack_end(body, False, False, 0)
+            self.window.add(outer)
 
         body.pack_start(self._build_header(), False, False, 0)
 
@@ -778,10 +803,14 @@ class Panel:
             GtkLayerShell.Edge.RIGHT,
         ):
             GtkLayerShell.set_anchor(win, edge, True)
-        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.TOP, False)
+        # The TOP edge only when the panel catches click-away itself: then the
+        # surface spans the screen, transparent except for the strip.
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.TOP, not self._focus_dismiss)
         # ON_DEMAND, not EXCLUSIVE: we don't hold a session-wide keyboard grab,
         # so e.g. the COSMIC panel's own right-click menu can still take focus.
-        # The panel yields focus when you click away — see _on_focus_out.
+        # On most compositors this is the last word on the subject — they focus
+        # the surface on map, and re-setting the mode later would only throw
+        # that focus away. COSMIC needs more; see _grab_keyboard.
         GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.ON_DEMAND)
         # -1: ignore the dock's exclusive zone and anchor to the true screen
         # edge, so the strip overlaps (covers) the dock rather than sitting above it.
@@ -1144,12 +1173,26 @@ class Panel:
     def _hide_actions(self) -> None:
         self.action_bar.hide()
 
+    def _on_backdrop_click(self, _widget, _event) -> bool:
+        # A click anywhere but the strip itself: that is the click-away, and it
+        # stops here rather than reaching whatever is underneath — the price of
+        # reading the click ourselves instead of asking the compositor.
+        self.hide()
+        return True
+
     def _on_focus_out(self, _widget, _event) -> bool:
         # Click-away dismissal: when the strip loses keyboard focus (you clicked
         # the desktop panel, another window, or the desktop), retract. Ignore the
         # brief focus settle right after showing, and any focus we lost to one of
         # our own popovers.
-        if self._popup_depth:
+        #
+        # Only where losing focus actually means the user clicked away. On
+        # wlroots it does not: focus-follows-mouse and window activation take it
+        # for reasons the user never asked for (the panel vanished as the mouse
+        # crossed a window), while clicking the window that already had it moves
+        # no focus at all (the panel stayed put). _on_backdrop_click reads those
+        # clicks directly instead.
+        if not self._focus_dismiss or self._popup_depth:
             return False
         if self._visible and (time.monotonic() - self._shown_at) > 0.25:
             self.hide()
@@ -1167,9 +1210,10 @@ class Panel:
         under it before you can choose a list. cosmic-comp does not move the
         grab that way, which is why this never showed up there.
 
-        So suppress dismissal while a popover is up, and take the keyboard grab
-        back when it closes -- otherwise the panel goes on running without the
-        focus it needs and can never be dismissed by clicking away again.
+        So suppress dismissal while a popover is up, and on the desktops that
+        need an explicit grab, take the keyboard back when it closes -- else the
+        panel goes on running without the focus it needs and can never be
+        dismissed by clicking away again (see _grab_keyboard).
         """
         pop.connect("show", self._on_popup_shown)
         pop.connect("closed", self._on_popup_closed)
@@ -1181,14 +1225,11 @@ class Panel:
         self._popup_depth = max(0, self._popup_depth - 1)
         if self._popup_depth or not self._visible:
             return
-        # The same grab dance as show(): EXCLUSIVE to reclaim the keyboard
-        # unconditionally, re-arm the settle window so the blip is not read as a
-        # click-away, then relax so real click-away works again.
-        GtkLayerShell.set_keyboard_mode(
-            self.window, GtkLayerShell.KeyboardMode.EXCLUSIVE
-        )
+        # Re-arm the settle window so the focus blip as the popover gives its
+        # grab back is not read as a click-away, and reclaim the keyboard the
+        # same way show() does — on the desktops that need it asked for.
         self._shown_at = time.monotonic()
-        GLib.timeout_add(180, self._relax_keyboard)
+        self._grab_keyboard()
 
     def delete_entry(self, entry_id: int) -> None:
         storage.delete(entry_id)
@@ -1351,23 +1392,36 @@ class Panel:
         # retention may have pruned old ones) since the panel was last shown.
         self._invalidate_cache()
         self.reload()
-        # Force the compositor to route the keyboard to our layer surface no
-        # matter how we were opened. ON_DEMAND alone works for the global
-        # shortcut but NOT for the tray menu — COSMIC won't hand focus to a
-        # layer surface mapped from a menu, leaving the panel stuck (Escape,
-        # click-away and search all need focus). EXCLUSIVE makes the grab
-        # unconditional; we relax to ON_DEMAND a moment later so a real click
-        # elsewhere can still move focus away and dismiss us (_on_focus_out).
-        GtkLayerShell.set_keyboard_mode(
-            self.window, GtkLayerShell.KeyboardMode.EXCLUSIVE
-        )
+        self._grab_keyboard()
         self.window.show_all()
         self.action_bar.hide()  # show_all reveals it; keep hidden until invoked
         self._visible = True
         self._shown_at = time.monotonic()
         self.search.grab_focus()
-        GLib.timeout_add(180, self._relax_keyboard)
         self._start_refresh_timer()
+
+    def _grab_keyboard(self) -> None:
+        """Make sure the keyboard reaches the panel, however it was opened.
+
+        On COSMIC, ON_DEMAND alone works for the global shortcut but NOT for the
+        tray menu — cosmic-comp won't hand focus to a layer surface mapped from
+        a menu, leaving the panel stuck (Escape, click-away and search all need
+        focus). EXCLUSIVE makes the grab unconditional; _relax_keyboard drops
+        back to ON_DEMAND a moment later so a real click elsewhere can still
+        move focus away and dismiss us (_on_focus_out).
+
+        On wlroots that same dance is what left the panel deaf: changing the
+        interactivity makes the compositor re-evaluate focus and give it to the
+        window under the panel, costing us the keyboard we had on map. There we
+        ask for nothing and leave the mode exactly as _init_layer_shell set it —
+        the panel is focused when it maps, and clicking it focuses it again.
+        """
+        if not self._focus_dismiss:
+            return
+        GtkLayerShell.set_keyboard_mode(
+            self.window, GtkLayerShell.KeyboardMode.EXCLUSIVE
+        )
+        GLib.timeout_add(180, self._relax_keyboard)
 
     def _relax_keyboard(self) -> bool:
         # Drop back to ON_DEMAND so click-away dismissal works again. This fires

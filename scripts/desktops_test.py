@@ -13,6 +13,8 @@ What it pins down:
   eats every colour and the theme falls back to the built-in palette;
 * a theme only colours the mode it *is*, so a dark theme never repaints a
   light panel.
+* the two per-compositor capabilities: who bridges the X11 selection, and
+  whose keyboard focus can be trusted to mean the user clicked away.
 """
 from __future__ import annotations
 
@@ -231,6 +233,28 @@ def test_x11_owner_capability():
         wayland._X11_OWNER_IS_ENOUGH = None
 
 
+def test_click_away_capability():
+    """Only cosmic-comp's keyboard focus is a fair report of "clicked away".
+
+    The regression this pins: the panel drove both its keyboard grab and its
+    dismissal off focus, everywhere. On Hyprland that gave two bugs at once —
+    the panel vanished when the pointer merely crossed a window (focus follows
+    the mouse) and would not go away when you clicked the window that already
+    had focus (no focus moved). It now catches that click on its own surface.
+    """
+    print("click-away capability")
+    fresh_home()
+    from clippy.desktops.cosmic import CosmicDesktop
+    from clippy.desktops.generic import GenericDesktop
+    from clippy.desktops.hyprland import HyprlandDesktop
+    check("cosmic reads click-away off focus",
+          CosmicDesktop().focus_out_means_click_away(), True)
+    check("hyprland catches the click itself",
+          HyprlandDesktop().focus_out_means_click_away(), False)
+    check("so does anything else",
+          GenericDesktop().focus_out_means_click_away(), False)
+
+
 def test_hex_parsing():
     print("hex parsing")
     fresh_home()
@@ -252,6 +276,7 @@ def main() -> int:
         test_omarchy_theme()
         test_generic()
         test_x11_owner_capability()
+        test_click_away_capability()
         test_hex_parsing()
     finally:
         if real_home:
