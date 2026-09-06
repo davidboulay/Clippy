@@ -108,8 +108,12 @@ nohup "$BIN" daemon >/tmp/clippy.log 2>&1 &
 sleep 1
 echo "    daemon started (log: /tmp/clippy.log)"
 
+
 echo
 echo "============================================================"
+# `status` ends with the firewall warning when one is due: LAN sync is
+# inbound, and a default-on firewall drops it while this side still looks
+# perfectly healthy.
 "$BIN" status || true
 echo
 echo "A paperclip should appear in your panel's tray. Open it → Settings"

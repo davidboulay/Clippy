@@ -256,6 +256,15 @@ def _make_engine():
         engine = sync.SyncEngine()
         engine.start()
         print("clippy: clipboard sync enabled.")
+        # A firewall dropping inbound connections leaves sync looking healthy
+        # from here — our copies land, the peer pings green — while every clip
+        # the peer copies is dropped at the door. Record it where the next
+        # diagnosis will look, and on the console for whoever is watching.
+        from . import firewall
+        note = firewall.hint()
+        if note:
+            sync._log("firewall: " + note.replace("\n", " ").replace("    ", ""))
+            print(f"clippy: {note}", file=sys.stderr)
         return engine
     except Exception as exc:
         print(f"clippy: sync disabled ({exc})", file=sys.stderr)

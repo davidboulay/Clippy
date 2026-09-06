@@ -132,6 +132,13 @@ def _cmd_pair(code: str, host: str = "") -> int:
         return 0
     if data.get("ok"):
         print(f"Paired with {data.get('name', 'device')}.")
+        # Pairing is the moment this bites: from here on the other device
+        # *connects to us* on every copy, and a closed port drops all of it
+        # while everything on this side still looks paired and healthy.
+        from . import firewall
+        note = firewall.hint()
+        if note:
+            print(f"\nNote: {note}")
         return 0
     print(f"clippy: pairing failed — {data.get('error', 'unknown error')}", file=sys.stderr)
     return 1
@@ -262,6 +269,11 @@ def _cmd_status() -> int:
         shown = "set it in your desktop (run `clippy setup-shortcut`)"
     print(f"desktop: {desktop.label}")
     print(f"shortcut: {shown}")
+
+    from . import firewall
+    note = firewall.hint()
+    if note:
+        print(f"\nsync:    {note}")
     return 0
 
 

@@ -1,3 +1,21 @@
+_sync_firewall_note() {
+    # LAN sync is inbound: a paired device connects to port 47823 on every copy
+    # it makes. Omarchy (and Ubuntu) ship ufw on by default, which drops that
+    # silently -- sync then looks healthy in both directions and delivers in
+    # one. We only say so; opening a port is the admin's call, not a package's.
+    systemctl is-active --quiet ufw 2>/dev/null || return 0
+    grep -qs -- '--dport 47823' /etc/ufw/user.rules /etc/ufw/user6.rules && return 0
+    cat <<'EOF'
+ufw is active and inbound TCP 47823 is closed. LAN sync needs it -- without it
+clips from your other devices are dropped before Clippy sees them (your own
+copies still reach them, which is what makes this one hard to spot). If you use
+sync, allow it on your LAN, e.g.:
+
+  sudo ufw allow from 192.168.1.0/24 to any port 47823 proto tcp comment 'Clippy LAN sync'
+
+EOF
+}
+
 post_install() {
     cat <<'EOF'
 
@@ -11,10 +29,12 @@ into ~/.config/hypr/bindings.lua. Check the key is free first with
 `omarchy menu keybindings --print` — SUPER+V and SUPER+CTRL+V are taken.
 
 EOF
+    _sync_firewall_note
 }
 
 post_upgrade() {
     # The running daemon keeps the old code until it is restarted. Say so
     # rather than killing it -- a silent kill would stop capturing clips.
     echo "Clippy updated. Restart the daemon to pick it up:  clippy quit && clippy daemon &"
+    _sync_firewall_note
 }
