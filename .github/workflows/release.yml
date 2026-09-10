@@ -69,3 +69,55 @@ jobs:
       contents: write
     secrets: inherit          # apt-repo needs APT_GPG_PRIVATE_KEY to sign
     uses: ./.github/workflows/apt-repo.yml
+
+  # Push the same version to the AUR, so `yay -Syu` / `paru -Syu` picks it up
+  # the way `apt upgrade` does for the .deb. Without this the AUR package is
+  # updated by hand — three files, one of them a checksum — which is the same
+  # manual step that let four releases ship without an APT index (see above).
+  #
+  # Runs after `deb` only for ordering; the source it publishes is GitHub's own
+  # tag tarball, which exists the moment the tag is pushed.
+  #
+  # makepkg is Arch-only, so the Arch-specific half runs in a container while
+  # checkout stays on the runner. Skipped, not failed, when the deploy key is
+  # absent: a release must not be blocked on a channel that isn't set up yet.
+  # See packaging/aur/README.md for the one-time account setup.
+  aur:
+    needs: deb
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check for AUR credentials
+        id: gate
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -n "$AUR_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not set — skipping the AUR publish."
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.gate.outputs.ready == 'true'
+
+      - name: Install the deploy key
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$AUR_KEY" > "$HOME/.ssh/aur"
+          chmod 600 "$HOME/.ssh/aur"
+
+      - name: Publish to the AUR
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" -v "$HOME/.ssh:/keys:ro" \
+            -e GIT_SSH_COMMAND="ssh -i /keys/aur -o StrictHostKeyChecking=accept-new" \
+            -e VERSION="${GITHUB_REF_NAME#v}" \
+            archlinux:base-devel bash -euo pipefail -c '
+              pacman -Sy --noconfirm --needed git openssh curl >/dev/null
+              cd /repo && ./packaging/aur/publish.sh "$VERSION"
+            '
