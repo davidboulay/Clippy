@@ -221,6 +221,22 @@ def capture_current():
             debuglog.log("capture.remimed", claimed=image_mime, actual=actual)
             image_mime = actual
         if data:
+            import hashlib
+            # These exact bytes may already be in history as a *file*, in which
+            # case this is our own file recover coming back rather than a new
+            # clip. On compositors where the Wayland selection carries a single
+            # flavor, an image file is published as bytes alone (see
+            # backends/wayland.copy_file), so the echo arrives with no uri-list
+            # for the file branch above to recognise it by. Storing it would put
+            # a second, byte-identical tile in history — 'image' and 'file' are
+            # separate rows under UNIQUE(kind, hash), so neither dedups the
+            # other — and broadcast that duplicate back to the peer that sent
+            # the file. Bump the entry we already have instead.
+            twin = storage.find_by_hash(hashlib.sha256(data).hexdigest(), "file")
+            if twin is not None:
+                debuglog.log("capture.file_echo", id=twin, bytes=len(data))
+                storage.touch(twin)
+                return None
             new_id = storage.add_image(data, image_mime)
     else:
         text_mime = clipboard.pick_text_type(types)

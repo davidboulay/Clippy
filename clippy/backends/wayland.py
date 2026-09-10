@@ -419,13 +419,37 @@ class WaylandBackend:
         payload = f"copy\nfile://{uri}".encode("utf-8")
         # Set the Wayland selection too: outside cosmic-comp the owner above
         # covers XWayland only, so without this a pasted file reaches nothing
-        # native. One type per wl-copy, and file managers want this one.
-        subprocess.run(["wl-copy", "--type", "x-special/gnome-copied-files"],
-                       input=payload, timeout=_WRITE_TIMEOUT)
+        # native.
+        #
+        # One type per wl-copy, so the flavors the owner serves *together* have
+        # to be narrowed to one here — and for an image file the file reference
+        # is the wrong half to keep. Slack, Chrome and Claude Desktop all run
+        # --ozone-platform=wayland, so they read the regular selection, ask for
+        # image/png, find only x-special/gnome-copied-files and paste nothing.
+        # This never showed on cosmic-comp, which returns above with both
+        # flavors live on the owner, so it surfaced only once the same clip
+        # (a CleanShot screenshot synced from the Mac, which arrives as a file
+        # reference rather than image data) was recovered on Hyprland.
+        #
+        # It is the same trade-off image_file_flavors already names — chat
+        # targets over file-drop targets — so it answers to the same setting,
+        # inverted: bytes by default, the file reference when the user has
+        # asked for file flavors. XWayland gets both from the owner regardless.
+        if img is not None and not settings.get("image_file_flavors"):
+            wl_type, wl_data = img
+        else:
+            wl_type, wl_data = "x-special/gnome-copied-files", payload
+        subprocess.run(["wl-copy", "--type", wl_type],
+                       input=wl_data, timeout=_WRITE_TIMEOUT)
         if not published:
-            # Mirror a uri-list to X11 so XWayland apps that accept a pasted file
-            # (editors, some chat apps) see it too.
-            self._x11_mirror("text/uri-list", f"file://{uri}\r\n".encode("utf-8"))
+            # No owner, so this one-shot mirror is all XWayland gets. Match the
+            # flavor the Wayland side took, except that X11 file targets read a
+            # uri-list rather than the gnome-copied-files list.
+            if wl_type.startswith("image/"):
+                self._x11_mirror(wl_type, wl_data)
+            else:
+                self._x11_mirror("text/uri-list",
+                                 f"file://{uri}\r\n".encode("utf-8"))
 
     @staticmethod
     def _image_bytes_for(path: str):
