@@ -1,6 +1,18 @@
 # Maintainer: David Boulay <89959743+davidboulay@users.noreply.github.com>
-# Builds Clippy from the local repository tree (run `makepkg` from this dir,
-# or `make arch` from the repo root).
+#
+# The AUR edition: builds from a published release tarball, not the working
+# tree, because the AUR clone is all an `aur/clippy` user ever has. Keep it
+# beside packaging/arch/PKGBUILD (which builds the local checkout for
+# `make arch`) rather than replacing it — the two answer different questions.
+#
+# Everything below package() is shared verbatim with that file and guarded by
+# scripts/pkgbuild_parity_test.py, so a fix to one that misses the other fails
+# CI instead of silently shipping a stale package to every AUR user.
+#
+# pkgver and sha256sums are rewritten by packaging/aur/publish.sh at release
+# time: the tarball this points at does not exist until the tag is pushed, so
+# the values checked in here are a last-known-good placeholder, never the
+# source of truth. Do not hand-edit them to publish — run the script.
 pkgname=clippy
 pkgver=1.6.2
 pkgrel=1
@@ -21,12 +33,13 @@ optdepends=('python-pynacl: encrypted LAN clipboard sync'
             'gtk4: XWayland clipboard takeover fallback')
 options=('!strip')
 install=clippy.install
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
 
-# Called from package() rather than assigned here: makepkg sources the PKGBUILD
-# before it exports srcdir, so the AUR edition's "$srcdir/Clippy-$pkgver" would
-# expand to "/Clippy-1.6.2" and cp would fail inside fakeroot. Deferring it into
-# a function is what lets both files share one package() body verbatim.
-_set_repo() { _repo="$(cd "$startdir/../.." && pwd)"; }
+# GitHub names the extracted directory after the repo and the tag, without the
+# leading v. Deferred for the reason given in packaging/arch/PKGBUILD: srcdir is
+# not exported when this file is sourced, only when package() runs.
+_set_repo() { _repo="$srcdir/Clippy-$pkgver"; }
 
 # The package tree is not on sys.path: it goes to /usr/lib/clippy and the
 # launcher puts that on PYTHONPATH. Installing into site-packages would bake in

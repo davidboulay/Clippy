@@ -45,6 +45,9 @@ jobs:
       - name: Storage migration (UNIQUE(kind, hash) rebuild preserves history)
         run: PYTHONPATH=. python scripts/storage_migration_test.py
 
+      - name: PKGBUILD parity (Arch checkout build vs AUR tarball build)
+        run: PYTHONPATH=. python scripts/pkgbuild_parity_test.py
+
       - name: Resilience (db errors, IPC concurrency, sound debounce)
         run: PYTHONPATH=. python scripts/resilience_test.py
 
