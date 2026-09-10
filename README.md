@@ -299,6 +299,20 @@ Continuity already does it. Clippy's sync is for everyone else.
 That's it — the macOS *Device sync* pane and `clippy peers` list paired devices,
 and either side can **unpair** later (which clears the pairing on both).
 
+**A firewall will break this in one direction only.** Delivery is sender-driven:
+a peer opens a TCP connection to port **47823** on the receiving device for
+every clip it copies. Outbound is what default policies allow, so a Linux box
+with `ufw` on (Omarchy and Ubuntu ship it enabled) still delivers its own copies
+and still shows every peer green — the liveness check is outbound too — while
+everything the peer copies is dropped at the door. Clippy now says so itself:
+`clippy status`, the line after pairing, the package's post-install note and the
+daemon's `sync.log` all name the port and print the rule. It stops at saying it —
+opening a port is yours to decide:
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 47823 proto tcp comment 'Clippy LAN sync'
+```
+
 > **Updating from a pre-1.5.2 build?** The pairing protocol changed for the
 > SPAKE2 security fix, so existing pairings are disabled and shown as *"re-pair
 > required"* — re-pair once (both devices on 1.5.2) to resume syncing.

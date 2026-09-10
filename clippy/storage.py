@@ -417,6 +417,20 @@ def get(entry_id: int) -> Optional[Entry]:
     return _row_to_entry(row) if row else None
 
 
+def find_by_hash(digest: str, kind: str) -> Optional[int]:
+    """The id of the entry storing ``digest`` under ``kind``, or None.
+
+    Content lookup across kinds: the same bytes can reach us as an image *and*
+    as a file, and the callers need to tell "already in history under another
+    kind" apart from "new clip". Keyed (kind, hash) so it rides the UNIQUE
+    index rather than scanning."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM entries WHERE kind=? AND hash=?", (kind, digest)
+        ).fetchone()
+    return row["id"] if row else None
+
+
 def paste_path(entry) -> Optional[str]:
     """A filesystem path with the entry's *original* filename, for putting a
     file back on the clipboard. Blobs are stored content-addressed as

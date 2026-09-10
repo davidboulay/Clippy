@@ -41,6 +41,7 @@ class Recorder:
         self.text = None
         self.published = None
         self.wl_copy_calls = []
+        self.wl_copy_inputs = []
         self.xclip_calls = []
 
     # -- x11clip surface
@@ -56,19 +57,27 @@ class Recorder:
         self.published = {d for d in digests if d}
 
 
-def install(monkeypatch_accept=True, owner_is_enough=True):
+def install(monkeypatch_accept=True, owner_is_enough=True,
+            image_file_flavors=False):
     """Point the backend at a Recorder and neutralise the shell fallbacks.
 
     ``owner_is_enough`` pins the desktop capability rather than letting the host
     decide it: whether publishing to the X11 owner is *also* the Wayland
     selection is true on cosmic-comp and false everywhere else, and the two
     answers give different, both-correct call patterns below.
+
+    ``image_file_flavors`` is pinned for the same reason — it changes which
+    single flavor the Wayland selection gets, so reading it off the machine
+    running the tests would make them pass or fail on the tester's preferences.
     """
     import subprocess
 
     from clippy.backends import wayland
 
     wayland._X11_OWNER_IS_ENOUGH = owner_is_enough
+    wayland.settings.get = (
+        lambda key: image_file_flavors if key == "image_file_flavors"
+        else REAL_SETTINGS_GET(key))
     rec = Recorder(monkeypatch_accept)
     wayland.x11clip.publish = rec.publish
     wayland.x11clip.publish_parts = rec.publish_parts
@@ -76,6 +85,7 @@ def install(monkeypatch_accept=True, owner_is_enough=True):
 
     def fake_run(cmd, **kw):
         rec.wl_copy_calls.append(cmd)
+        rec.wl_copy_inputs.append(kw.get("input"))
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
     wayland.subprocess.run = fake_run
@@ -84,7 +94,10 @@ def install(monkeypatch_accept=True, owner_is_enough=True):
     return rec
 
 
+from clippy import settings as _settings                 # noqa: E402
+
 ORIGINALS = (x11clip.publish, x11clip.publish_parts, x11clip.note_published)
+REAL_SETTINGS_GET = _settings.get
 HTML = "<meta charset='utf-8'><table><tr><td>a</td><td>b</td></tr></table>"
 PLAIN = "a\tb"
 
@@ -192,9 +205,55 @@ check("image/png is offered alongside the file", "image/png" in mimes, True)
 check("the image flavor carries the real bytes",
       dict(rec.parts)["image/png"], png)
 check("file flavors are still offered too", "text/uri-list" in mimes, True)
+check("cosmic: the owner is the whole offer, no wl-copy", rec.wl_copy_calls, [])
+
+print("image-file recover off cosmic-comp (the Slack paste regression)")
+# The owner reaches XWayland only here, and wl-copy carries ONE type, so the
+# flavor chosen for the Wayland selection is the whole offer for native-Wayland
+# apps. Sending the file reference is what made a Mac-synced CleanShot
+# screenshot paste as nothing in Slack (--ozone-platform=wayland: it asks for
+# image/png and found only x-special/gnome-copied-files).
+rec = install(owner_is_enough=False)
+WaylandBackend().copy_file(str(imgtmp))
+check("still published to the owner for XWayland",
+      "image/png" in [m for m, _ in (rec.parts or [])], True)
+check("the Wayland selection is set", len(rec.wl_copy_calls), 1)
+check("carrying image/png, which is what chat apps ask for",
+      rec.wl_copy_calls[0], ["wl-copy", "--type", "image/png"])
+check("with the real bytes, not a file:// URI", rec.wl_copy_inputs[0], png)
+check("no redundant xclip mirror when the owner accepted", rec.xclip_calls, [])
+
+print("image-file recover off cosmic-comp with image_file_flavors on")
+# The user has asked for file-drop targets to win; the single Wayland flavor
+# follows that, and image targets fall back to the owner as before.
+rec = install(owner_is_enough=False, image_file_flavors=True)
+WaylandBackend().copy_file(str(imgtmp))
+check("the file reference takes the Wayland selection",
+      rec.wl_copy_calls[0], ["wl-copy", "--type", "x-special/gnome-copied-files"])
+check("image/png is still on the owner for XWayland",
+      "image/png" in [m for m, _ in (rec.parts or [])], True)
+
+print("image-file recover with no owner at all")
+rec = install(monkeypatch_accept=False, owner_is_enough=False)
+WaylandBackend().copy_file(str(imgtmp))
+check("the xclip mirror carries the image, not the uri-list",
+      rec.xclip_calls, [("image/png", png)])
+
+print("non-image file recover off cosmic-comp is unchanged")
+# Only an image file has a second flavor worth preferring; everything else
+# still goes out as the file reference file managers read.
+rec = install(owner_is_enough=False)
+WaylandBackend().copy_file(str(tmp))
+check("still the gnome-copied-files list",
+      rec.wl_copy_calls[0], ["wl-copy", "--type", "x-special/gnome-copied-files"])
+check("and its payload is the copy verb plus the URI",
+      (rec.wl_copy_inputs[0] or b"").startswith(b"copy\nfile://"), True)
+
 imgtmp.unlink(missing_ok=True)
+tmp.unlink(missing_ok=True)
 
 x11clip.publish, x11clip.publish_parts, x11clip.note_published = ORIGINALS
+_settings.get = REAL_SETTINGS_GET
 
 print()
 if FAILURES:

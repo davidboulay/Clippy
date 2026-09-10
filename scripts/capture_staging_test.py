@@ -94,6 +94,70 @@ def main():
     check("flavor dir must not equal paste dir",
           config.FLAVOR_DIR.resolve() != config.PASTE_DIR.resolve())
 
+    # The *other* echo of a file recover, which no staging path can catch.
+    #
+    # Off cosmic-comp the Wayland selection holds one flavor, so an image file
+    # is put back as raw bytes alone (backends/wayland.copy_file) — there is no
+    # uri-list left for _is_own_staging to inspect. Filing those bytes would add
+    # an 'image' row byte-identical to the 'file' row they came from, since
+    # UNIQUE(kind, hash) makes the two different rows, and _cmd_store would
+    # broadcast the duplicate straight back to the peer that sent the file.
+    config.DATA_DIR = root
+    config.DB_PATH = root / "history.db"
+    config.IMAGE_DIR = root / "images"
+    config.FILE_DIR = root / "files"
+    config.IMAGE_DIR.mkdir(exist_ok=True)
+    config.FILE_DIR.mkdir(exist_ok=True)
+
+    shot = root / "CleanShot 2026-09-10 at 10.37.42@2x.png"
+    png = b"\x89PNG\r\n\x1a\n" + b"screenshot" * 512
+    shot.write_bytes(png)
+    file_id = storage.add_file_from_path(str(shot), shot.name, "image/png")
+    check("the synced screenshot lands as a file entry", file_id is not None)
+
+    class FakeClipboard:
+        """The selection as it looks right after copy_file put the bytes back."""
+        @staticmethod
+        def list_types():
+            return ["image/png"]
+
+        @staticmethod
+        def read_file_paths(types):
+            return []
+
+        @staticmethod
+        def pick_image_type(types):
+            return "image/png"
+
+        @staticmethod
+        def pick_html_type(types):
+            return None
+
+        @staticmethod
+        def pick_text_type(types):
+            return None
+
+        @staticmethod
+        def read_bytes(mime):
+            return png
+
+    real_clipboard = capture.clipboard
+    capture.clipboard = FakeClipboard
+    try:
+        echoed = capture.capture_current()
+    finally:
+        capture.clipboard = real_clipboard
+
+    check("the bytes echo must not be filed as a new clip",
+          echoed is None,
+          "a second, identical tile appears on every image-file recover "
+          "and gets broadcast back over sync")
+    check("and history must still hold exactly the one entry",
+          storage.count() == 1, f"count={storage.count()}")
+    check("the file entry is the one that was found",
+          storage.find_by_hash(
+              __import__("hashlib").sha256(png).hexdigest(), "file") == file_id)
+
     if failures:
         print("FAIL: capture staging guard is wrong:")
         for f in failures:
