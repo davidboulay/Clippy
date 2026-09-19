@@ -260,9 +260,15 @@ def _cmd_status() -> int:
     from . import setup
     desktop = setup.shortcut_backend()
     combo = setup.read_shortcut()
-    if combo:
-        shown = "+".join(combo[0] + [combo[1].upper() if len(combo[1]) == 1
-                                     else combo[1]])
+    # A binding the user wrote by hand works exactly as well as one we wrote;
+    # reporting "not set" for it sent people to setup-shortcut to redo a job
+    # already done, and on through the picker to a second bind on the same key.
+    unmanaged = setup.read_unmanaged_shortcut() if not combo else None
+    if combo or unmanaged:
+        mods, key = combo or unmanaged
+        shown = "+".join(mods + [key.upper() if len(key) == 1 else key])
+        if unmanaged:
+            shown += "  (set by hand; Clippy's settings won't change it)"
     elif desktop.can_bind():
         shown = "not set (run `clippy setup-shortcut`)"
     else:

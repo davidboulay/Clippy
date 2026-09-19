@@ -69,6 +69,9 @@ class GenericDesktop:
     def read_shortcut(self) -> Optional[Shortcut]:
         return None
 
+    def read_unmanaged_shortcut(self) -> Optional[Shortcut]:
+        return None
+
     def set_shortcut(self, modifiers: List[str], key: str, command: str) -> bool:
         return False
 

@@ -57,6 +57,9 @@ jobs:
       - name: X11 takeover gate
         run: PYTHONPATH=. python scripts/x11_takeover_gate_test.py
 
+      - name: Unmanaged shortcut (hand-written binds seen, never rewritten)
+        run: PYTHONPATH=. python scripts/unmanaged_shortcut_test.py
+
       - name: Desktop integration (shortcut round-trips, Omarchy theme parsing)
         run: PYTHONPATH=. python scripts/desktops_test.py
 

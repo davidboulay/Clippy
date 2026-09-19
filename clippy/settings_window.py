@@ -508,7 +508,7 @@ class SettingsWindow:
 
     # -- current shortcut -------------------------------------------------
     def _current_combo(self):
-        live = setup.read_shortcut()
+        live = setup.read_shortcut() or setup.read_unmanaged_shortcut()
         if live:
             return live
         sc = settings.get("shortcut") or {}
@@ -673,10 +673,20 @@ class SettingsWindow:
                 "run `clippy setup-shortcut` for the steps."
             )
             return
+        # We only ever rewrite our own managed block, so a binding the user
+        # wrote by hand survives this and both fire on the same press. Saying so
+        # beats silently leaving a duplicate for them to find later.
+        hand = setup.read_unmanaged_shortcut()
         if setup.set_shortcut(mods, key):
             settings.set_value("shortcut", {"modifiers": mods, "key": key})
             self._sc_btn.set_label(_combo_text(mods, key))
-            self._sc_desc.set_text("Saved. Try it now.")
+            if hand:
+                self._sc_desc.set_text(
+                    f"Saved. You also have {_combo_text(*hand)} bound to Clippy "
+                    "by hand — remove it yourself if you don't want both."
+                )
+            else:
+                self._sc_desc.set_text("Saved. Try it now.")
         else:
             self._sc_btn.set_label(self._current_combo_text())
             self._sc_desc.set_text(

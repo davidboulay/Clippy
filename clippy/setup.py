@@ -178,6 +178,20 @@ def read_shortcut() -> Optional[Tuple[List[str], str]]:
         return None
 
 
+def read_unmanaged_shortcut() -> Optional[Tuple[List[str], str]]:
+    """A Clippy binding the user wrote by hand, or None.
+
+    getattr-guarded: a desktop backend from before this existed is still a
+    valid Desktop, and a missing reader must read as "none found" rather than
+    take down `clippy status`.
+    """
+    try:
+        reader = getattr(get_desktop(), "read_unmanaged_shortcut", None)
+        return reader() if reader else None
+    except Exception:
+        return None
+
+
 def set_shortcut(modifiers: List[str], key: str) -> bool:
     """Register/replace the Clippy toggle shortcut. Returns success."""
     cmd = spawn_command()

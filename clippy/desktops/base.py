@@ -68,6 +68,12 @@ class Desktop(Protocol):
         """The binding currently registered for Clippy, or None."""
         ...
 
+    def read_unmanaged_shortcut(self) -> Optional[Shortcut]:
+        """A Clippy binding the user wrote by hand, outside anything we
+        manage, or None. Read-only: we never rewrite a line we did not write,
+        so this exists to *report* rather than to take ownership."""
+        ...
+
     def set_shortcut(self, modifiers: List[str], key: str, command: str) -> bool:
         """Register/replace Clippy's toggle shortcut, spawning ``command``.
         Returns success."""
