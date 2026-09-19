@@ -39,7 +39,7 @@ elif command -v apt-get >/dev/null 2>&1; then
         libayatana-appindicator3-1 \
         libnotify-bin \
         pipewire-bin
-    sudo apt-get install -y python3-nacl python3-zeroconf \
+    sudo apt-get install -y python3-nacl python3-zeroconf python3-spake2 \
         || echo "    WARN: sync deps unavailable; LAN sync will stay off"
 elif command -v dnf >/dev/null 2>&1; then
     # Fedora and friends.
@@ -51,7 +51,7 @@ elif command -v dnf >/dev/null 2>&1; then
         libayatana-appindicator-gtk3 \
         libnotify \
         pipewire-utils
-    sudo dnf install -y python3-pynacl python3-zeroconf \
+    sudo dnf install -y python3-pynacl python3-zeroconf python3-spake2 \
         || echo "    WARN: sync deps unavailable; LAN sync will stay off"
 else
     echo "    No supported package manager found (pacman/apt-get/dnf)."

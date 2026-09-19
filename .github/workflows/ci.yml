@@ -57,6 +57,9 @@ jobs:
       - name: mDNS readvertise self-test
         run: PYTHONPATH=. python scripts/sync_readvertise_test.py
 
+      - name: Sync dependency hint (per-distro names, spake2 parity)
+        run: PYTHONPATH=. python scripts/sync_hint_test.py
+
       - name: X11 takeover gate
         run: PYTHONPATH=. python scripts/x11_takeover_gate_test.py
 

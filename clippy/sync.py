@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 from . import config, settings, storage
 
@@ -52,6 +52,68 @@ except Exception as _e:  # pragma: no cover - dependency missing
 def import_error() -> str:
     """Why sync is unavailable (the real ImportError), for diagnostics."""
     return _IMPORT_ERROR.strip()
+
+
+# What to tell a user who has none of it. Keyed by import name, because that is
+# what the guards above actually report -- the module and the package rarely
+# share a name (nacl/PyNaCl, and every distro spells both differently). Kept in
+# step with scripts/install.sh and the packaging depends lists; the parity that
+# matters is spake2, which is required by sync_available() and was missing from
+# three of the four install routes.
+_SYNC_PACKAGES = {
+    "pacman": {"nacl": "python-pynacl", "zeroconf": "python-zeroconf",
+               "spake2": "python-spake2"},
+    "apt": {"nacl": "python3-nacl", "zeroconf": "python3-zeroconf",
+            "spake2": "python3-spake2"},
+    "dnf": {"nacl": "python3-pynacl", "zeroconf": "python3-zeroconf",
+            "spake2": "python3-spake2"},
+}
+_INSTALL_CMD = {"pacman": "sudo pacman -S", "apt": "sudo apt install",
+                "dnf": "sudo dnf install"}
+
+
+def missing_modules() -> List[str]:
+    """Which sync imports failed, by import name, in dependency order."""
+    missing = []
+    if not _HAVE_NACL:
+        missing.append("nacl")
+    if not _HAVE_ZC:
+        missing.append("zeroconf")
+    if not _HAVE_SPAKE2:
+        missing.append("spake2")
+    return missing
+
+
+def _package_manager() -> Optional[str]:
+    """Which manager to name in a hint. Same order scripts/install.sh uses."""
+    import shutil
+    for tool, key in (("pacman", "pacman"), ("apt-get", "apt"), ("dnf", "dnf")):
+        if shutil.which(tool):
+            return key
+    return None
+
+
+def missing_packages_hint() -> str:
+    """One line telling the user how to make sync available here.
+
+    Derived from what actually failed to import rather than a fixed list: a
+    hardcoded hint naming two of the three modules sent users who installed
+    exactly what it asked straight back to the same unchanged message, with no
+    way to discover that sync_available() also wants spake2.
+    """
+    missing = missing_modules()
+    if not missing:
+        return ""
+    if os.environ.get("FLATPAK_ID"):
+        # Nothing the user can install into a sandboxed build; this is ours.
+        return ("Sync is unavailable: this Flatpak build is missing "
+                + ", ".join(missing) + ".")
+    mgr = _package_manager()
+    if mgr is None:
+        return "Install " + ", ".join(missing) + " to enable sync."
+    names = [_SYNC_PACKAGES[mgr][m] for m in missing]
+    return f"To enable sync:  {_INSTALL_CMD[mgr]} " + " ".join(names)
+
 
 PROTO = 1
 # Pairing protocol version. v1 was a symmetric HMAC the code-holder disclosed in
