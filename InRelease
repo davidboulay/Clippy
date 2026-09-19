@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: all
+Codename: stable
+Components: main
+Date: Sat, 19 Sep 2026 13:34:16 +0000
+Label: Clippy
+Origin: Clippy
+Suite: stable
+MD5Sum:
+ 9c2f79d71b9ceba6a1a02fab16b12d00            44491 Packages
+ 6f6ba4a1bf4ee32a5c5c5c911de1e141             5533 Packages.gz
+ cbce87b366a8fd9f7ffee8b6afb779e1              134 Release
+SHA1:
+ bec1007a2c211a5f90728b66737fcce6d1bb2f0e            44491 Packages
+ 7d7e33819f9d683945fb106ade494b2c30885318             5533 Packages.gz
+ 93e1f331a8a22b59a86e5b2ce669f82468fa2f6a              134 Release
+SHA256:
+ c6bed40545016957a01af74f524e3554a580e775e0deef629cc3b098bb5285ab            44491 Packages
+ 6551f80d0e85062adf608b43f02abf5440d120a6d014756c0effe3b155c38211             5533 Packages.gz
+ 53260d2e6427f90dbdeaa4b167f7d54764dff9c8d8f64fa1a215636d4283a0fc              134 Release
+SHA512:
+ 93c32ec0825725d276eed5d0a49b9a2d5ba3681ca357fbfa468c50400f2568ede3e76efd4adfea2cdcf58c52b1f0a292c4aba5f2dcf8f691afa1bcdda3f021dd            44491 Packages
+ dfb3c070b99f2f2bb41afc7b08eee9b6cbde677bab44a12c5807eb800e9d22460ed5fd7c2e6f2b5e4c4ed5bedc90cf70b5a0c4a0d70573b118e5c8fdbced1e05             5533 Packages.gz
+ 8616d5affb4560da28c3b96d7a52d6b0e1f6707cd8f419277395cb9853b1f0b6f6a41881c3c0fd8d700a08b95c28d0d4a7767d3414dab6ab7fc87b03fd99d6f0              134 Release
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEESglAzrIoQzoqsiBrOyybPqXOJnEFAmquj1gACgkQOyybPqXO
+JnFnqg//WnhwBM42F2RsP6jqckgQHBsyxjndtmdhORDpMAJ2QzPwZist/h1VssVH
+34+SGTpwqxp9dZEXrN/XCIkg28YtQA6a5aufMBaGXsG17gW+tHB5gjrKju3yzg72
+spkOZkFzag0J89/Z8ZFT3+jkPyh/1U4y+GEAG2sW2X20SmMWPE8tpqdqWzGzo7Jc
+lve7z9l4fwGDtJzVQTyfC8kbQX8TqQ+QEn80DHzk0A/qIaCmqVfShox/Aau4kaBo
+Tu48EhECpo8tRMBln7UXefUHzJuIYUck0qkwQp/25aPz3jnqdJnwn8PAGrjJXzlF
+9CP1rJXz9kS5IH2dKCrf3ITV8wQe2zT6s3R1NSzVgfEiU5lX78Rz3/gkLCz6Yc9t
+hnXtMYEWzuDXe49QXLtZPezIo1ROGvTLM2AoqzMXqYSH9JnHKNUs/dly8vHp9mmO
++8hgYYJk3YRmygXJNYxloIpQCuWSaDtBOZLBzPDT/bNlqYIYwLFi2BXNmL1h2d/n
+EPfS3jP9KfIc1H3gjvPYrwtGgSGTmkt8Pl+nt7UTSlpWXOgxGNS3vukHMQ+J/CLp
+W+1OW+DO1o1yCeeGUk+qlBcXPAsUNvHDvgp46myIqpNrrhr+ufK8efIq79RzxF74
+t2NcwKD0kNkurZ9xZ7LD4SB96fzbGtlCuDQqFVI0kAYDz2+e5Oc=
+=CL4d
+-----END PGP SIGNATURE-----
