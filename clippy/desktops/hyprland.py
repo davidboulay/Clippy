@@ -48,6 +48,14 @@ _LUA_BIND = re.compile(r'o\.bind\(\s*"([^"]*)"', re.DOTALL)
 # `bind = SUPER SHIFT, V, exec, …`
 _CONF_BIND = re.compile(r'^\s*bind\s*=\s*([^,]*),\s*([^,]+),', re.MULTILINE)
 
+# The same two forms, but capturing the command as well, so a binding that runs
+# Clippy can be told apart from the dozens that do not. The Lua description
+# argument is a string or `nil` (Omarchy's own examples use both).
+_LUA_BIND_CMD = re.compile(
+    r'o\.bind\(\s*"([^"]*)"\s*,\s*(?:"[^"]*"|nil)\s*,\s*"([^"]*)"')
+_CONF_BIND_CMD = re.compile(
+    r'^\s*bind\s*=\s*([^,]*),\s*([^,]+),\s*exec\s*,\s*(.+)$', re.MULTILINE)
+
 # Clippy's modifier vocabulary -> Hyprland's.
 _TO_HYPR = {"Super": "SUPER", "Ctrl": "CTRL", "Alt": "ALT", "Shift": "SHIFT"}
 _FROM_HYPR = {
@@ -70,6 +78,19 @@ def _hypr_key(key: str) -> str:
 def _combo(modifiers: List[str], key: str) -> str:
     mods = [_TO_HYPR[m] for m in modifiers if m in _TO_HYPR]
     return " + ".join(mods + [_hypr_key(key)])
+
+
+# A command that opens Clippy's panel. Anchored on the executable name and the
+# subcommand together: matching "clippy" loose would claim any binding whose
+# path merely contains the word (a checkout under ~/src/clippy/, a wrapper
+# named clippy-debug), and claiming someone else's binding is worse than
+# missing our own.
+_CLIPPY_CMD = re.compile(r'(?:^|[/\s])clippy\s+(?:toggle|show|hide)\b')
+
+
+def _runs_clippy(command: str) -> bool:
+    """Whether a bound command opens Clippy's panel."""
+    return bool(_CLIPPY_CMD.search(command))
 
 
 def _parse_combo(text: str) -> Optional[Shortcut]:
@@ -139,6 +160,41 @@ class HyprlandDesktop(GenericDesktop):
             return _parse_combo(m.group(1)) if m else None
         m = _CONF_BIND.search(block)
         return _parse_combo(f"{m.group(1)} {m.group(2)}") if m else None
+
+    def read_unmanaged_shortcut(self) -> Optional[Shortcut]:
+        """A Clippy binding the user wrote themselves, outside our block.
+
+        :meth:`read_shortcut` deliberately sees only the managed block, which is
+        right for writing -- we must never rewrite a line we did not write. But
+        reporting "not set" for a binding that plainly works is wrong twice
+        over: `clippy status` and `setup-shortcut` keep telling the user to do
+        something they have already done, and the settings picker will write a
+        second binding for the same key without noticing the first.
+
+        Omarchy loads bindings.lua after its defaults, so a hand-written bind
+        lives there beside ours. Plain Hyprland gets a file of our own, so the
+        user's own binding is in hyprland.conf instead -- different file, same
+        question.
+        """
+        target = BINDINGS_LUA if self.omarchy else HYPRLAND_CONF
+        try:
+            content = target.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        # Drop our own block first, or we would report ourselves as unmanaged.
+        begin, end = self._markers()
+        content = re.compile(
+            re.escape(begin) + r".*?" + re.escape(end), re.DOTALL).sub("", content)
+
+        if self.omarchy:
+            for combo, command in _LUA_BIND_CMD.findall(content):
+                if _runs_clippy(command):
+                    return _parse_combo(combo)
+            return None
+        for mods, key, command in _CONF_BIND_CMD.findall(content):
+            if _runs_clippy(command):
+                return _parse_combo(f"{mods} {key}")
+        return None
 
     def set_shortcut(self, modifiers: List[str], key: str, command: str) -> bool:
         combo = _combo(modifiers, key)

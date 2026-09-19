@@ -79,6 +79,11 @@ class CosmicDesktop:
         mods = [tok.strip() for tok in m.group(1).split(",") if tok.strip()]
         return mods, m.group(2)
 
+    def read_unmanaged_shortcut(self) -> Optional[Shortcut]:
+        # COSMIC keeps custom bindings in one file we already read whole, so a
+        # hand-written Clippy binding is found by read_shortcut or not at all.
+        return None
+
     def set_shortcut(self, modifiers: List[str], key: str, command: str) -> bool:
         CUSTOM.parent.mkdir(parents=True, exist_ok=True)
         try:
