@@ -9,6 +9,7 @@ caller gets data back.
 """
 from __future__ import annotations
 
+import fcntl
 import os
 import socket
 import threading
@@ -55,6 +56,63 @@ def send(command: str, timeout: float = 5.0) -> Optional[str]:
 
 def daemon_running() -> bool:
     return send("ping") == "pong"
+
+
+# Held open for the life of the daemon process; the kernel drops the flock when
+# the process dies, so an abnormal exit leaves nothing stale behind.
+_lock_fd: Optional[int] = None
+
+
+def acquire_single_instance() -> bool:
+    """Take the daemon's exclusive lock. True if we now own it.
+
+    ``daemon_running`` cannot serialize two daemons starting at once: it asks
+    over the socket, and ``Server.start`` then unlinks whatever is there and
+    binds afresh. Both racers get no answer, both bind, and the loser's socket
+    is orphaned -- leaving a second daemon with its own clipboard watcher and
+    its own listener on the sync port, which ``quit`` can never reach because
+    that only ever finds the socket's current owner. Autostart firing while the
+    user presses the shortcut is enough to hit it.
+
+    The lock is taken before the ping and before the socket, so a loser exits
+    having stolen nothing. If the lock file itself is unusable we fall through
+    and start anyway: refusing to run at all would be a worse failure than the
+    narrow race it guards.
+    """
+    global _lock_fd
+    if _lock_fd is not None:
+        return True
+    try:
+        fd = os.open(str(config.LOCK_PATH), os.O_WRONLY | os.O_CREAT, 0o600)
+    except OSError:
+        return True
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    _lock_fd = fd
+    # Record the holder; purely so `fuser`/a human can identify the winner.
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+    except OSError:
+        pass
+    return True
+
+
+def release_single_instance() -> None:
+    """Drop the lock. The kernel does this on exit; this is for in-process
+    callers (tests, and the upgrade path that backs out after the ping)."""
+    global _lock_fd
+    if _lock_fd is None:
+        return
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+        os.close(_lock_fd)
+    except OSError:
+        pass
+    _lock_fd = None
 
 
 class Server:

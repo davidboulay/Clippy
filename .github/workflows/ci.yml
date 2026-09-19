@@ -51,6 +51,9 @@ jobs:
       - name: Resilience (db errors, IPC concurrency, sound debounce)
         run: PYTHONPATH=. python scripts/resilience_test.py
 
+      - name: Daemon single-instance lock (concurrent starts, crash recovery)
+        run: PYTHONPATH=. python scripts/single_instance_test.py
+
       - name: mDNS readvertise self-test
         run: PYTHONPATH=. python scripts/sync_readvertise_test.py
 

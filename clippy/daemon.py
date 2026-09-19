@@ -499,7 +499,15 @@ def run_daemon() -> int:
         return 1
 
     config.ensure_dirs()
+    # Two guards, in this order. The lock is what actually serializes two
+    # daemons starting at once; the ping is kept because a daemon from a
+    # version that predates the lock holds nothing to contend for, which is
+    # exactly the situation during an upgrade.
+    if not ipc.acquire_single_instance():
+        print("clippy: daemon already running.")
+        return 0
     if ipc.daemon_running():
+        ipc.release_single_instance()
         print("clippy: daemon already running.")
         return 0
 
