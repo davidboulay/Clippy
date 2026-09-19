@@ -104,7 +104,7 @@ class SettingsWindow:
             return lbl
 
         if not sync_mod.sync_available():
-            note("Install python3-nacl and python3-zeroconf to enable sync.")
+            note(sync_mod.missing_packages_hint())
             return
         engine = getattr(self._controller, "sync", None)
         if engine is None:
