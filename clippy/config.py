@@ -34,6 +34,7 @@ THUMB_DIR = DATA_DIR / "thumbs"         # cached preview thumbnails (e.g. video 
 PASTE_DIR = DATA_DIR / "paste"
 FLAVOR_DIR = PASTE_DIR / ".image-flavor"
 SOCKET_PATH = RUNTIME_DIR / "clippy.sock"
+LOCK_PATH = RUNTIME_DIR / "clippy.lock"   # daemon single-instance lock
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
 # --- LAN clipboard sync (see clippy/sync.py) ---
