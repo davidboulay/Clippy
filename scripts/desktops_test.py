@@ -327,13 +327,14 @@ class _FakeKglobalaccel:
             return f"([([{code}, 0, 0, 0],)],)\n" if code else "([],)\n"
         if method == "doRegister":
             return "()\n"
-        if method == "setForeignShortcutKeys":
+        if method == "setShortcutKeys":
             comp = args[0].split("'")[1]
+            self.flags = int(args[2])
             if args[1] == "[]":
                 self.keys.pop(comp, None)
             else:
                 self.keys[comp] = int(args[1].split("[([")[1].split(",")[0])
-            return "()\n"
+            return "([],)\n"
         if method == "unregister":
             return "(true,)\n"
         if method == "blockGlobalShortcuts":
@@ -349,7 +350,8 @@ def test_kde_shortcut():
     apps.mkdir(parents=True)
     (apps / "clippy.desktop").write_text("[Desktop Entry]\nExec=clippy toggle\n")
     saved = _with_env(XDG_DATA_HOME=str(home / ".local" / "share"),
-                      XDG_DATA_DIRS="/nonexistent", FLATPAK_ID=None)
+                      XDG_DATA_DIRS="/nonexistent", FLATPAK_ID=None,
+                      XDG_RUNTIME_DIR=str(home))
     try:
         from clippy.desktops.kde import KdeDesktop, combo_to_qt, qt_to_combo
         check("Meta+Shift+V encodes like System Settings",
@@ -365,8 +367,10 @@ def test_kde_shortcut():
         check("binds the shipped entry", kde.component, "clippy.desktop")
         check("not set yet", kde.read_shortcut(), None)
         check_true("set", kde.set_shortcut(["Super", "Shift"], "v", "clippy toggle"))
-        check("doRegister precedes setForeignShortcutKeys",
-              fake.calls.index("doRegister") < fake.calls.index("setForeignShortcutKeys"), True)
+        check("doRegister precedes setShortcutKeys",
+              fake.calls.index("doRegister") < fake.calls.index("setShortcutKeys"), True)
+        check("marked present, or KWin ignores the key press", fake.flags & 0x2, 0x2)
+        check("never setForeignShortcutKeys", "setForeignShortcutKeys" in fake.calls, False)
         check("read back", kde.read_shortcut(), (["Super", "Shift"], "v"))
         check("never reports itself as unmanaged", kde.read_unmanaged_shortcut(), None)
         check_true("remove", kde.remove_shortcut())
@@ -376,6 +380,14 @@ def test_kde_shortcut():
         check("capture suspends global shortcuts", fake.blocked, True)
         kde.end_capture()
         check("and restores them", fake.blocked, False)
+        kde.begin_capture()
+        fresh = KdeDesktop()          # a new daemon after a quit mid-capture
+        fresh._call = fake
+        fresh.recover_capture()
+        check("a restart lifts a suspension left behind", fake.blocked, False)
+        fake.blocked = True           # someone else's (System Settings) block
+        fresh.recover_capture()
+        check("but never one it did not take", fake.blocked, True)
 
         (apps / "clippy.desktop").unlink()
         installed = []

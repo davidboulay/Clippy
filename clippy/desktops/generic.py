@@ -88,6 +88,10 @@ class GenericDesktop:
     def end_capture(self) -> None:
         """Recording finished or was cancelled."""
 
+    def recover_capture(self) -> None:
+        """Daemon start/exit: undo anything a capture interrupted by a quit
+        or crash left behind. Nothing to undo here."""
+
     def shortcut_help(self, command: str) -> str:
         return (
             f"Clippy could not detect where {self.label} keeps its keyboard\n"

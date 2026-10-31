@@ -29,6 +29,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional, Sequence
 
+from .. import config
 from .base import Shortcut
 from .generic import GenericDesktop
 
@@ -36,6 +37,13 @@ _DEST = "org.kde.kglobalaccel"
 _PATH = "/kglobalaccel"
 _IFACE = "org.kde.KGlobalAccel"
 _ACTION = "_launch"
+
+# KGlobalAccel::SetShortcutFlag. SetPresent is what makes KWin act on the key:
+# a shortcut set without it is stored, listed by System Settings and even fires
+# from invokeShortcut, but a real key press is ignored. NoAutoloading keeps
+# kglobalaccel from replacing our keys with a stored older value.
+_SET_PRESENT = 0x2
+_NO_AUTOLOADING = 0x4
 
 # Qt::KeyboardModifier flags, in Clippy's modifier vocabulary.
 _QT_MODS = {
@@ -206,27 +214,50 @@ class KdeDesktop(GenericDesktop):
         action = self._action_id()
         if self._call("doRegister", action) is None:
             return False
-        if self._call("setForeignShortcutKeys", action,
-                      f"[([{code}, 0, 0, 0],)]") is None:
+        # Not setForeignShortcutKeys: it stores the keys without marking the
+        # shortcut present, and KWin then ignores the key press (found live on
+        # Plasma 6.8: listed, invokable over D-Bus, dead on the keyboard).
+        if self._call("setShortcutKeys", action, f"[([{code}, 0, 0, 0],)]",
+                      str(_SET_PRESENT | _NO_AUTOLOADING)) is None:
             return False
         return self.read_shortcut() is not None
 
     def remove_shortcut(self) -> bool:
         action = self._action_id()
-        if self._call("setForeignShortcutKeys", action, "[]") is None:
+        if self._call("setShortcutKeys", action, "[]",
+                      str(_SET_PRESENT | _NO_AUTOLOADING)) is None:
             return False
         self._call("unregister", self.component, _ACTION)
         return True
 
     # -- capture ----------------------------------------------------------
+    _BLOCK_MARKER = config.RUNTIME_DIR / "clippy-kde-shortcuts-blocked"
+
     def begin_capture(self) -> None:
         """Suspend global shortcuts while the settings window records a key,
         as System Settings does -- otherwise KWin acts on an already-bound
-        combo (toggling the panel) and the window never sees the press."""
+        combo (toggling the panel) and the window never sees the press.
+
+        The suspension is global and outlives this process, so a marker in
+        the runtime dir records that we hold it; recover_capture() lifts it
+        if Clippy quit or crashed mid-capture."""
+        try:
+            self._BLOCK_MARKER.touch()
+        except OSError:
+            pass
         self._call("blockGlobalShortcuts", "true")
 
     def end_capture(self) -> None:
         self._call("blockGlobalShortcuts", "false")
+        try:
+            self._BLOCK_MARKER.unlink()
+        except OSError:
+            pass
+
+    def recover_capture(self) -> None:
+        """Daemon start/exit: undo a suspension a previous capture left on."""
+        if self._BLOCK_MARKER.exists():
+            self.end_capture()
 
     # -- theme ------------------------------------------------------------
     def _scheme(self) -> dict:
