@@ -16,8 +16,10 @@ kglobalaccel encodes a key as a Qt key combination (modifier flags OR a
 ``Qt::Key``); the tables below translate to and from Clippy's
 ``(modifiers, gdk keyval name)`` vocabulary.
 
-Theme and the clipboard/panel quirks are the generic ones: Plasma answers the
-XDG settings portal, and KWin bridges its own selections.
+The theme comes from the active color scheme in ``kdeglobals`` (``r,g,b``
+triplets per ``[Colors:*]`` group), and dark/light from its window background,
+so Clippy matches the scheme rather than only the portal's binary hint. The
+clipboard/panel quirks are the generic ones: KWin bridges its own selections.
 """
 from __future__ import annotations
 
@@ -111,6 +113,11 @@ def qt_to_combo(value: int) -> Optional[Shortcut]:
     # Same order the settings-window capture produces.
     mods = [m for m in ("Super", "Ctrl", "Alt", "Shift") if value & _QT_MODS[m]]
     return mods, key
+
+
+def _kdeglobals() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "kdeglobals"
 
 
 def _gvariant_strv(items: Sequence[str]) -> str:
@@ -220,6 +227,64 @@ class KdeDesktop(GenericDesktop):
 
     def end_capture(self) -> None:
         self._call("blockGlobalShortcuts", "false")
+
+    # -- theme ------------------------------------------------------------
+    def _scheme(self) -> dict:
+        """``{(group, key): (r, g, b)}`` from kdeglobals: the user's file over
+        the system default, as KConfig cascades them."""
+        out: dict = {}
+        files = [Path("/etc/xdg/kdeglobals"), _kdeglobals()]
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            group = ""
+            for raw in text.splitlines():
+                line = raw.strip()
+                if line.startswith("[") and line.endswith("]"):
+                    group = line[1:-1]
+                    continue
+                if not group.startswith("Colors:") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                parts = value.strip().split(",")
+                if len(parts) < 3:
+                    continue
+                try:
+                    rgb = tuple(max(0, min(255, int(p))) / 255.0 for p in parts[:3])
+                except ValueError:
+                    continue
+                out[(group[len("Colors:"):], key.strip())] = rgb
+        return out
+
+    def is_dark(self) -> bool:
+        bg = self._scheme().get(("Window", "BackgroundNormal"))
+        if bg is not None:
+            r, g, b = bg
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5
+        return super().is_dark()
+
+    def palette(self, dark: bool) -> dict:
+        scheme = self._scheme()
+        bg = scheme.get(("Window", "BackgroundNormal"))
+        # A color scheme is one mode. Asked for the other, let the built-in
+        # palette answer rather than paint a light panel with dark colors.
+        if bg is None or self.is_dark() != dark:
+            return {}
+        wanted = {
+            "background": ("Window", "BackgroundNormal"),
+            "surface": ("Button", "BackgroundNormal"),
+            "foreground": ("Window", "ForegroundNormal"),
+            "accent": ("Selection", "BackgroundNormal"),
+            "danger": ("Window", "ForegroundNegative"),
+            "warning": ("Window", "ForegroundNeutral"),
+        }
+        return {name: scheme[k] for name, k in wanted.items() if k in scheme}
+
+    def theme_paths(self) -> List[Path]:
+        path = _kdeglobals()
+        return [path] if path.exists() else []
 
     def shortcut_help(self, command: str) -> str:
         return (

@@ -390,6 +390,54 @@ def test_kde_shortcut():
         _with_env(**saved)
 
 
+def test_portal_color_scheme_parse():
+    """The portal answers "(<uint32 1>,)". Collecting every digit read 321 --
+    neither 0 nor 1 -- so every dark desktop on the generic path read light."""
+    print("portal color-scheme parse")
+    fresh_home()
+    from clippy.desktops import generic
+
+    class _P:
+        returncode = 0
+        def __init__(self, out): self.stdout = out
+    real = generic.subprocess.run
+    try:
+        for out, want in [("(<uint32 1>,)\n", 1), ("(<<uint32 2>>,)\n", 2),
+                          ("(<uint32 0>,)\n", 0), ("garbage\n", None)]:
+            generic.subprocess.run = lambda *a, _o=out, **k: _P(_o)
+            check(f"{out.strip()} -> {want}", generic._portal_color_scheme(), want)
+    finally:
+        generic.subprocess.run = real
+
+
+def test_kde_theme():
+    print("kde theme")
+    home = fresh_home()
+    cfg = home / ".config"
+    cfg.mkdir(parents=True)
+    saved = _with_env(XDG_CONFIG_HOME=str(cfg))
+    try:
+        (cfg / "kdeglobals").write_text(
+            "[General]\nColorScheme=OxygenDark\n\n"
+            "[Colors:Window]\nBackgroundNormal=38,36,35\nForegroundNormal=255,232,223\n"
+            "ForegroundNegative=191,3,3\nForegroundNeutral=176,128,0\n\n"
+            "[Colors:Button]\nBackgroundNormal=57,53,50\n\n"
+            "[Colors:Selection]\nBackgroundNormal=247,159,82\n")
+        from clippy.desktops.kde import KdeDesktop
+        kde = KdeDesktop()
+        check("dark scheme reads dark", kde.is_dark(), True)
+        pal = kde.palette(True)
+        check("all six colors", sorted(pal), sorted(
+            ["background", "surface", "foreground", "accent", "danger", "warning"]))
+        check("accent from Selection", pal["accent"], (247 / 255, 159 / 255, 82 / 255))
+        check("never paints the other mode", kde.palette(False), {})
+        check("watches kdeglobals", kde.theme_paths(), [cfg / "kdeglobals"])
+        (cfg / "kdeglobals").write_text("[Colors:Window]\nBackgroundNormal=239,240,241\n")
+        check("light scheme reads light", kde.is_dark(), False)
+    finally:
+        _with_env(**saved)
+
+
 def main() -> int:
     real_home = os.environ.get("HOME")
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -403,6 +451,8 @@ def main() -> int:
         test_hex_parsing()
         test_detection()
         test_kde_shortcut()
+        test_portal_color_scheme_parse()
+        test_kde_theme()
     finally:
         if real_home:
             os.environ["HOME"] = real_home
