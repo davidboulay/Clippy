@@ -12,6 +12,8 @@ finish-args:
   # System-tray icon host (only used if the Ayatana AppIndicator module is
   # enabled; the app degrades gracefully without it).
   - --talk-name=org.kde.StatusNotifierWatcher
+  # KDE Plasma: register the global shortcut with kglobalaccel
+  - --talk-name=org.kde.kglobalaccel
   # Lets Clippy register its global shortcut + autostart on the host. Reviewers
   # may ask to drop the cosmic one; if removed, the shortcut is set manually in
   # COSMIC settings (command: flatpak run io.github.davidboulay.Clippy toggle).

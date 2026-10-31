@@ -78,6 +78,13 @@ class GenericDesktop:
     def remove_shortcut(self) -> bool:
         return False
 
+    def begin_capture(self) -> None:
+        """The settings window is about to record a key. Only desktops whose
+        compositor would swallow a bound combo first need to act (KDE)."""
+
+    def end_capture(self) -> None:
+        """Recording finished or was cancelled."""
+
     def shortcut_help(self, command: str) -> str:
         return (
             f"Clippy could not detect where {self.label} keeps its keyboard\n"

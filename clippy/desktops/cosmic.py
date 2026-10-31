@@ -60,8 +60,13 @@ class CosmicDesktop:
     label = "COSMIC"
 
     def detected(self) -> bool:
-        if "cosmic" in (os.environ.get("XDG_CURRENT_DESKTOP") or "").lower():
-            return True
+        # A session that names its desktop is believed: ~/.config/cosmic also
+        # exists wherever COSMIC is merely *installed*, so on Plasma or
+        # Hyprland the directory alone made Clippy write shortcuts to a desktop
+        # that was not running. The directory is only a hint when nothing says.
+        desktop = (os.environ.get("XDG_CURRENT_DESKTOP") or "").lower()
+        if desktop:
+            return "cosmic" in desktop
         return _CONFIG.is_dir()
 
     # -- global shortcut --------------------------------------------------

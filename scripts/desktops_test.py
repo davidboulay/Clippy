@@ -267,6 +267,129 @@ def test_hex_parsing():
     check("empty", parse_hex(""), None)
 
 
+def _with_env(**env):
+    """Set (value) or clear (None) env vars; returns the previous values."""
+    old = {k: os.environ.get(k) for k in env}
+    for k, v in env.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    return old
+
+
+def test_detection():
+    """The session's own XDG_CURRENT_DESKTOP decides; config dirs only when
+    it is unset.
+
+    The regression this pins: ~/.config/cosmic exists wherever COSMIC is merely
+    installed, so a Plasma session with COSMIC beside it was detected as COSMIC
+    and the settings picker wrote a shortcut Plasma never reads.
+    """
+    print("detection")
+    home = fresh_home()
+    (home / ".config" / "cosmic").mkdir(parents=True)
+    (home / ".config" / "hypr").mkdir(parents=True)
+    (home / ".config" / "hypr" / "hyprland.conf").write_text("")
+    keys = ("XDG_CURRENT_DESKTOP", "HYPRLAND_INSTANCE_SIGNATURE", "KDE_FULL_SESSION")
+    saved = _with_env(**{k: None for k in keys})
+    try:
+        import clippy.desktops as desktops
+        cases = [
+            ("KDE", {"XDG_CURRENT_DESKTOP": "KDE"}, "kde"),
+            ("COSMIC", {"XDG_CURRENT_DESKTOP": "COSMIC"}, "cosmic"),
+            ("Hyprland", {"XDG_CURRENT_DESKTOP": "Hyprland"}, "hyprland"),
+            ("GNOME", {"XDG_CURRENT_DESKTOP": "ubuntu:GNOME"}, "generic"),
+            ("unset, cosmic dir present", {}, "cosmic"),
+        ]
+        for label, env, want in cases:
+            _with_env(**{k: None for k in keys})
+            _with_env(**env)
+            desktops._desktop = None
+            check(f"{label} -> {want}", desktops.get_desktop().name, want)
+    finally:
+        _with_env(**saved)
+
+
+class _FakeKglobalaccel:
+    """Just enough of org.kde.KGlobalAccel, speaking gdbus's text format."""
+
+    def __init__(self):
+        self.keys = {}        # component -> key int
+        self.blocked = False
+        self.calls = []
+
+    def __call__(self, method, *args, **_kw):
+        self.calls.append(method)
+        if method == "shortcutKeys":
+            comp = args[0].split("'")[1]
+            code = self.keys.get(comp)
+            return f"([([{code}, 0, 0, 0],)],)\n" if code else "([],)\n"
+        if method == "doRegister":
+            return "()\n"
+        if method == "setForeignShortcutKeys":
+            comp = args[0].split("'")[1]
+            if args[1] == "[]":
+                self.keys.pop(comp, None)
+            else:
+                self.keys[comp] = int(args[1].split("[([")[1].split(",")[0])
+            return "()\n"
+        if method == "unregister":
+            return "(true,)\n"
+        if method == "blockGlobalShortcuts":
+            self.blocked = args[0] == "true"
+            return "()\n"
+        return None
+
+
+def test_kde_shortcut():
+    print("kde shortcut")
+    home = fresh_home()
+    apps = home / ".local" / "share" / "applications"
+    apps.mkdir(parents=True)
+    (apps / "clippy.desktop").write_text("[Desktop Entry]\nExec=clippy toggle\n")
+    saved = _with_env(XDG_DATA_HOME=str(home / ".local" / "share"),
+                      XDG_DATA_DIRS="/nonexistent", FLATPAK_ID=None)
+    try:
+        from clippy.desktops.kde import KdeDesktop, combo_to_qt, qt_to_combo
+        check("Meta+Shift+V encodes like System Settings",
+              combo_to_qt(["Super", "Shift"], "v"), 301989974)
+        check("and decodes back", qt_to_combo(301989974), (["Super", "Shift"], "v"))
+        check("F-keys round-trip", qt_to_combo(combo_to_qt(["Ctrl"], "F5")), (["Ctrl"], "F5"))
+        check("grave round-trips", qt_to_combo(combo_to_qt(["Super"], "grave")), (["Super"], "grave"))
+        check("unknown key is refused", combo_to_qt(["Super"], "XF86Foo"), None)
+
+        kde = KdeDesktop()
+        fake = _FakeKglobalaccel()
+        kde._call = fake
+        check("binds the shipped entry", kde.component, "clippy.desktop")
+        check("not set yet", kde.read_shortcut(), None)
+        check_true("set", kde.set_shortcut(["Super", "Shift"], "v", "clippy toggle"))
+        check("doRegister precedes setForeignShortcutKeys",
+              fake.calls.index("doRegister") < fake.calls.index("setForeignShortcutKeys"), True)
+        check("read back", kde.read_shortcut(), (["Super", "Shift"], "v"))
+        check("never reports itself as unmanaged", kde.read_unmanaged_shortcut(), None)
+        check_true("remove", kde.remove_shortcut())
+        check("gone", kde.read_shortcut(), None)
+
+        kde.begin_capture()
+        check("capture suspends global shortcuts", fake.blocked, True)
+        kde.end_capture()
+        check("and restores them", fake.blocked, False)
+
+        (apps / "clippy.desktop").unlink()
+        installed = []
+        kde._install_entry = lambda: installed.append(1) or True
+        kde.set_shortcut(["Super"], "v", "clippy toggle")
+        check("writes an app entry when none is installed", installed, [1])
+
+        _with_env(FLATPAK_ID="io.github.davidboulay.Clippy")
+        check("flatpak binds its exported entry",
+              KdeDesktop().component, "io.github.davidboulay.Clippy.desktop")
+    finally:
+        _with_env(**saved)
+
+
 def main() -> int:
     real_home = os.environ.get("HOME")
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -278,6 +401,8 @@ def main() -> int:
         test_x11_owner_capability()
         test_click_away_capability()
         test_hex_parsing()
+        test_detection()
+        test_kde_shortcut()
     finally:
         if real_home:
             os.environ["HOME"] = real_home
