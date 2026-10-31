@@ -68,7 +68,8 @@ Each platform integrates natively:
 
 - **Linux:** a system-tray paperclip, a full-screen click-away overlay, and a
   shortcut Clippy **binds for you** in your desktop's own config — COSMIC's
-  custom shortcuts, or Hyprland/Omarchy's `bindings.lua`. It follows that
+  custom shortcuts, Hyprland/Omarchy's `bindings.lua`, or KDE Plasma's global
+  shortcuts. It follows that
   desktop's light/dark mode *and* its palette.
 - **macOS:** a menubar paperclip, **QuickLook** thumbnails, and the **icon of the
   app each clip came from** on every tile (a Wayland security boundary makes that
@@ -167,13 +168,16 @@ one it detected.
 
 **Shortcut.** Open the tray icon → **Settings** (or the ⚙ in the panel), click
 the shortcut button, and press your combo. Clippy writes the binding into
-whichever config your desktop actually reads:
+whichever config your desktop actually reads. The desktop is the one your
+session names in `XDG_CURRENT_DESKTOP`; a left-over `~/.config/cosmic` or
+`~/.config/hypr` only counts when that is unset:
 
 | Desktop | Where the binding goes |
 |---|---|
 | **COSMIC** | `~/.config/cosmic/…/Shortcuts/v1/custom`, with a one-time backup of your existing shortcuts |
 | **Omarchy** | a marked block in `~/.config/hypr/bindings.lua`, then `hyprctl reload` |
 | **Hyprland** (plain) | `~/.config/hypr/clippy.conf`, sourced once from `hyprland.conf`, then `hyprctl reload` |
+| **KDE Plasma** | Plasma's own global shortcuts (kglobalaccel, live, no file edits): the launch shortcut of Clippy's app entry, the same one System Settings → Shortcuts shows, so either side can change it |
 | anything else | nothing is written — `clippy setup-shortcut` prints what to bind by hand |
 
 To see the steps for your desktop from the terminal: `clippy setup-shortcut`.
@@ -328,7 +332,7 @@ not, so the Linux side uses the native Wayland protocols.
 |------|-----------------|-------|
 | Panel pinned to the screen edge | **wlr-layer-shell** (`gtk-layer-shell`) | borderless **NSPanel** at pop-up-menu window level |
 | Watch the clipboard | **`wl-paste --watch`** (`ext-data-control`) | **`NSPasteboard`** polling |
-| Global hotkey | a **desktop shortcut** running `clippy toggle`, written by Clippy into COSMIC's or Hyprland's config | **Carbon `RegisterEventHotKey`** (⌘⇧V) |
+| Global hotkey | a **desktop shortcut** running `clippy toggle`, written by Clippy into COSMIC's or Hyprland's config, or registered with KDE Plasma's kglobalaccel | **Carbon `RegisterEventHotKey`** (⌘⇧V) |
 | Menubar / tray presence | **StatusNotifierItem** (Ayatana AppIndicator) | **`NSStatusItem`** |
 | UI toolkit | **GTK 3** (PyGObject) | **AppKit** (PyObjC) |
 | Theme | the desktop's own palette — COSMIC's theme files, Omarchy's `colors.toml`, else the XDG portal | `NSAppearance` light/dark |

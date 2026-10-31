@@ -20,7 +20,8 @@ def _detect() -> "Desktop":
 
     from .cosmic import CosmicDesktop
     from .hyprland import HyprlandDesktop
-    for cls in (CosmicDesktop, HyprlandDesktop):
+    from .kde import KdeDesktop
+    for cls in (CosmicDesktop, HyprlandDesktop, KdeDesktop):
         try:
             candidate = cls()
             if candidate.detected():

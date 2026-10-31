@@ -141,6 +141,10 @@ class HyprlandDesktop(GenericDesktop):
             return True
         if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
             return True
+        # Config files only decide when the session names no desktop: a synced
+        # or left-over ~/.config/hypr says nothing about a Plasma session.
+        if desktop:
+            return False
         return BINDINGS_LUA.is_file() or HYPRLAND_CONF.is_file()
 
     # -- global shortcut --------------------------------------------------

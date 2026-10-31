@@ -491,6 +491,14 @@ def _run_headless(engine) -> int:
     return 0
 
 
+def _recover_capture() -> None:
+    try:
+        from .desktops import get_desktop
+        getattr(get_desktop(), "recover_capture", lambda: None)()
+    except Exception:
+        pass
+
+
 def run_daemon() -> int:
     try:
         clipboard.require_tools()
@@ -578,12 +586,16 @@ def run_daemon() -> int:
         _UPDATE_TICK_SECONDS, lambda: (auto_update_check(controller), True)[1]
     )
 
+    # A shortcut capture cut short by a quit or crash can leave the desktop's
+    # global shortcuts suspended (Plasma); lift that on the way in and out.
+    _recover_capture()
     print("clippy: daemon started.")
     try:
         Gtk.main()
     except KeyboardInterrupt:
         pass
     finally:
+        _recover_capture()
         server.stop()
         x11clip.stop()
         if engine is not None:

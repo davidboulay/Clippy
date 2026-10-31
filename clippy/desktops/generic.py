@@ -8,6 +8,7 @@ Clippy's built-in dark palette.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Optional
@@ -32,9 +33,11 @@ def _portal_color_scheme() -> Optional[int]:
         return None
     if proc.returncode != 0:
         return None
-    # "(<uint32 1>,)"
-    digits = "".join(ch for ch in proc.stdout if ch.isdigit())
-    return int(digits) if digits else None
+    # "(<uint32 1>,)" -- or "(<<uint32 1>>,)" from older portals. Read the
+    # number after the type, not every digit: the "32" in "uint32" made this
+    # 321, which is neither 0 nor 1, so a dark desktop always read as light.
+    m = re.search(r"uint32\s+(\d+)", proc.stdout)
+    return int(m.group(1)) if m else None
 
 
 def _gsettings_prefers_dark() -> Optional[bool]:
@@ -77,6 +80,17 @@ class GenericDesktop:
 
     def remove_shortcut(self) -> bool:
         return False
+
+    def begin_capture(self) -> None:
+        """The settings window is about to record a key. Only desktops whose
+        compositor would swallow a bound combo first need to act (KDE)."""
+
+    def end_capture(self) -> None:
+        """Recording finished or was cancelled."""
+
+    def recover_capture(self) -> None:
+        """Daemon start/exit: undo anything a capture interrupted by a quit
+        or crash left behind. Nothing to undo here."""
 
     def shortcut_help(self, command: str) -> str:
         return (

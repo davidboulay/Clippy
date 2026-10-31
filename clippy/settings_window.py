@@ -648,13 +648,41 @@ class SettingsWindow:
             self._controller.settings_changed()
         dlg.destroy()
 
+    def _set_capturing(self, on: bool) -> None:
+        """Enter/leave key capture, and tell the desktop: on Plasma, KWin acts
+        on an already-bound combo before this window sees it, so global
+        shortcuts are suspended while we record. That suspension is global and
+        outlives us, hence the timeout and the hide() hook -- it must never be
+        left on."""
+        if on == self._capturing:
+            return
+        self._capturing = on
+        desktop = setup.shortcut_backend()
+        timer = getattr(self, "_capture_timer", None)
+        if timer is not None:
+            GLib.source_remove(timer)
+            self._capture_timer = None
+        if on:
+            getattr(desktop, "begin_capture", lambda: None)()
+            self._capture_timer = GLib.timeout_add_seconds(20, self._capture_timeout)
+        else:
+            getattr(desktop, "end_capture", lambda: None)()
+
+    def _capture_timeout(self):
+        self._capture_timer = None
+        if self._capturing:
+            self._set_capturing(False)
+            self._sc_btn.get_style_context().remove_class("capturing")
+            self._sc_btn.set_label(self._current_combo_text())
+        return False
+
     def _on_capture_start(self, _btn):
-        self._capturing = True
+        self._set_capturing(True)
         self._sc_btn.set_label("Press keys… (Esc to cancel)")
         self._sc_btn.get_style_context().add_class("capturing")
 
     def _finish_capture(self, mods, key):
-        self._capturing = False
+        self._set_capturing(False)
         self._sc_btn.get_style_context().remove_class("capturing")
         if setup.spawn_command() is None:
             self._sc_desc.set_text(
@@ -696,7 +724,7 @@ class SettingsWindow:
     def _on_key(self, _w, event):
         if self._capturing:
             if event.keyval == Gdk.KEY_Escape:
-                self._capturing = False
+                self._set_capturing(False)
                 self._sc_btn.get_style_context().remove_class("capturing")
                 self._sc_btn.set_label(self._current_combo_text())
                 return True
@@ -729,6 +757,10 @@ class SettingsWindow:
         return True
 
     def hide(self):
+        if self._capturing:
+            self._set_capturing(False)
+            self._sc_btn.get_style_context().remove_class("capturing")
+            self._sc_btn.set_label(self._current_combo_text())
         if getattr(self, "_sync_timer", None) is not None:
             GLib.source_remove(self._sync_timer)
             self._sync_timer = None
