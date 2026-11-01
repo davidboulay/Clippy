@@ -68,15 +68,32 @@ def _cmd_send(command: str) -> int:
 
 def _cmd_store() -> int:
     """Internal hook for wl-paste --watch."""
+    import os
     try:
         sys.stdin.buffer.read()  # drain so wl-paste never blocks
     except (OSError, ValueError):
         pass
     from . import ipc
+
+    # wl-paste says why it ran (CLIPBOARD_STATE, wl-clipboard >= 2.2; unset on
+    # older versions, which behave as before). nil = the clipboard went empty
+    # because its owner went away — the app you copied from closed; clear =
+    # someone emptied it on purpose (not every compositor reports it: KWin sends
+    # nil for both). Neither has anything to capture: the daemon decides whether
+    # to put the last clip back (see keeper.py).
+    state = os.environ.get("CLIPBOARD_STATE", "data")
+    if state in ("nil", "clear"):
+        ipc.send(f"_lost {state}")
+        return 0
+
     from .capture import capture_current
 
     entry_id = capture_current()
-    if entry_id:
+    if not entry_id:
+        # The clipboard holds something we didn't store. If its owner goes away
+        # the previous entry is not what was lost, so don't put that back.
+        ipc.send("_forget uncaptured")
+    else:
         # Every clipboard change has to reach the daemon so it can keep the X11
         # selection in step: mirror an image there (Xwayland never exports image
         # selections, so XWayland apps otherwise can't paste it) and hand the
@@ -90,6 +107,12 @@ def _cmd_store() -> int:
         from . import debuglog
         if not _send_current(entry_id):
             debuglog.log("store.current_undelivered", id=entry_id)
+        if state == "sensitive":
+            # A password manager flagged this clip: never put it back once its
+            # owner withdraws it. After _current (which marks the entry as the
+            # live one), and safe there: wl-paste runs hooks one at a time, so
+            # no nil can arrive in between.
+            ipc.send("_forget sensitive")
         ipc.send("refresh")
         ipc.send(f"_broadcast {entry_id}")   # broadcast exactly this item
     return 0

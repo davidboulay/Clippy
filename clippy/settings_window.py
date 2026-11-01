@@ -403,6 +403,12 @@ class SettingsWindow:
             bool(prefs["always_plain_text"]), self._on_plain,
         )
 
+        self._switch_row(
+            gen, "Keep the clipboard when apps close",
+            "Closing the app you copied from no longer empties the clipboard.",
+            bool(prefs["keep_clipboard"]), self._on_keep,
+        )
+
         sc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         sc_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         sc_lbl = Gtk.Label(label="Open Clippy")
@@ -626,6 +632,9 @@ class SettingsWindow:
 
     def _on_plain(self, active):
         settings.set_value("always_plain_text", active)
+
+    def _on_keep(self, active):
+        settings.set_value("keep_clipboard", active)
 
     def _on_retention(self, combo):
         key = combo.get_active_id()

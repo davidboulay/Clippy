@@ -51,6 +51,10 @@ The same panel and history engine run on both platforms:
   PDF / spreadsheet / archive / other), with per-type colored badges.
 - **Plain vs. rich paste** — strip formatting, or keep it when the source had it.
   Right-click a tile to copy as plain text.
+- **Keeps the clipboard** (Linux) — closing the app you copied from no longer
+  empties the clipboard: Clippy puts the clip back, the way Klipper does on
+  Plasma, on any Wayland desktop. Clips a password manager marks as sensitive
+  are never put back. Toggle in Settings.
 - **History retention** — keep for *1 day / 1 week / 1 month / 1 year / forever*,
   with automatic pruning, plus a manual *Clear history*.
 - **Live updates** — an open panel refreshes as new clips arrive, including ones
@@ -453,6 +457,7 @@ clippy/
   tabs.py            shared custom tabs store (tabs.json)  ·  mac_tabs.py alias
   clip_types.py      shared clip type classifier (label + key + icon)
   capture.py         read clipboard → storage (+ sound, retention)
+  keeper.py          put the clip back when its source app closes (Linux)
   clipboard.py       backend dispatch (text/image/file read + write)
   backends/          per-OS clipboard: wayland.py (wl-*) + mac.py (NSPasteboard)
   desktops/          per-desktop shortcut + theme: cosmic.py · hyprland.py · generic.py
