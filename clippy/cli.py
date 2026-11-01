@@ -152,6 +152,13 @@ def _cmd_pair(code: str, host: str = "") -> int:
         print(f"Pairing code: {data['code']}")
         print("On the other device run:  clippy pair " + data["code"])
         print("(valid for 2 minutes)")
+        # Showing a code means the other device is about to connect *to us*.
+        # A firewall dropping that fails the pairing on the other side with
+        # nothing printed here, so say it now, before the code is typed.
+        from . import firewall
+        note = firewall.hint()
+        if note:
+            print(f"\nPairing will fail until this is fixed: {note}")
         return 0
     if data.get("ok"):
         print(f"Paired with {data.get('name', 'device')}.")

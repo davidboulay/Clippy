@@ -12,6 +12,7 @@ Needs: python3-nacl + python3-zeroconf  (or: pip install --user pynacl zeroconf)
 """
 import hashlib
 import pathlib
+import socket
 import sys
 import tempfile
 import time
@@ -276,6 +277,27 @@ assert _vet(b"RIFF....WEBP", "image/webp", {}) == "image/webp", "unknown magic p
 assert _vet(b"\xd6\xa6\x07\x00" + _PNG8, "image/png", {}) is None, "length-prefixed PNG must be dropped"
 assert _vet(b"not an image at all", "image/png", {}) is None, "unidentifiable bytes must be dropped"
 print("12. mislabelled inbound media relabelled or rejected")
+
+# A peer whose sync port never answers (a firewall dropping the SYN, or no
+# daemon) must not be reported as "no device matched the code": no code was
+# ever compared, and that message sent a user re-typing a correct code while
+# ufw on the code-showing device dropped every attempt.
+_closed = socket.socket(); _closed.bind(("127.0.0.1", 0))
+_dead_port = _closed.getsockname()[1]; _closed.close()   # nothing listens here
+_saved = dict(B._peers_online)
+B._peers_online.clear()
+B._peers_online["ghost"] = ("127.0.0.1", _dead_port, "ghost-laptop")
+res = B.join_pairing("123456")
+B._peers_online.clear(); B._peers_online.update(_saved)
+assert not res.get("ok"), res
+err = res.get("error", "")
+assert "couldn't reach" in err and "ghost-laptop" in err and "firewall" in err, err
+assert "matched the code" not in err, err
+res = B._pair_client("127.0.0.1", _dead_port, "123456")
+assert res.get("unreachable") and "refused" in res["error"], res
+_t = sync._unreachable_error([("mac", "10.0.0.2", 47823)], socket.timeout())
+assert "timed out" in _t and "mac (10.0.0.2)" in _t and "47823" in _t, _t
+print("13. unreachable peer named as a connection/firewall failure, not a code mismatch")
 
 A.stop(); B.stop()
 print("\n✅ ALL SYNC CORE TESTS PASSED")

@@ -309,4 +309,9 @@ notebook tab:checked {{ color: {c['text']}; }}
 .shortcut-btn:hover, .normal-btn:hover {{ background-color: {c['field_hover']}; }}
 .shortcut-btn.capturing {{ border-color: {c['accent']}; color: {c['accent']}; }}
 .danger {{ color: {c['danger']}; }}
+.fw-card {{
+    background-color: {c['field']}; border: 1px solid {c['danger']};
+    border-radius: 8px; padding: 10px 12px; margin: 4px 0;
+}}
+.fw-title {{ color: {c['danger']}; font-size: 13px; font-weight: bold; }}
 """

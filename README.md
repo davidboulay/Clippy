@@ -313,8 +313,11 @@ every clip it copies. Outbound is what default policies allow, so a Linux box
 with `ufw` on (Omarchy and Ubuntu ship it enabled) still delivers its own copies
 and still shows every peer green — the liveness check is outbound too — while
 everything the peer copies is dropped at the door. Clippy now says so itself:
-`clippy status`, the line after pairing, the package's post-install note and the
-daemon's `sync.log` all name the port and print the rule. It stops at saying it —
+`clippy status`, the Sync settings tab, the pairing code screen (pairing is
+inbound on the code-showing device, so a firewall there blocks pairing too), the
+line after pairing, the package's post-install note and the daemon's `sync.log`
+all name the port and print the rule. A device that can't reach the other one
+while pairing now says so, rather than "no device matched the code". It stops at saying it —
 opening a port is yours to decide:
 
 ```bash
