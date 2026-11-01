@@ -115,13 +115,11 @@ class SettingsWindow:
         note(f"This device: {st['device']}  ·  {st['fingerprint']}")
 
         # Pairing and every clip from a peer arrive inbound. A firewall that
-        # drops them leaves this tab looking healthy, so show the rule here,
-        # selectable, where the user is about to pair.
-        from . import firewall
-        self._fw_note = firewall.hint()
-        if self._fw_note:
-            fw = note("⚠ " + self._fw_note)
-            fw.set_selectable(True)
+        # drops them leaves this tab looking healthy, so say it here, where
+        # the user is about to pair, with a way to act on it.
+        self._fw_card = self._build_firewall_card()
+        if self._fw_card is not None:
+            body.pack_start(self._fw_card, False, False, 0)
 
         btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         show_btn = Gtk.Button(label="Show pairing code")
@@ -163,6 +161,89 @@ class SettingsWindow:
         self._sync_check_lbl.get_style_context().add_class("settings-desc")
         self._refresh_peers()
 
+    # -- firewall card ---------------------------------------------------
+    def _build_firewall_card(self):
+        """Warning card + Allow / Copy buttons, or None when nothing blocks."""
+        from . import firewall
+        self._fw_block = firewall.hint_block()
+        b = self._fw_block
+        if b is None:
+            return None
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card.get_style_context().add_class("fw-card")
+
+        title = Gtk.Label(label=f"⚠  {b.name} is blocking sync")
+        title.set_xalign(0.0)
+        title.get_style_context().add_class("fw-title")
+        card.pack_start(title, False, False, 0)
+
+        desc = Gtk.Label(label=(
+            f"Your other devices can't connect to this one on TCP {b.port}, "
+            f"so pairing fails and their clips never arrive. Allow it from "
+            f"{b.scope}."))
+        desc.set_xalign(0.0)
+        desc.set_line_wrap(True)
+        desc.get_style_context().add_class("settings-desc")
+        card.pack_start(desc, False, False, 0)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        if firewall.can_elevate():
+            allow_btn = Gtk.Button(label="Allow on my network")
+            allow_btn.get_style_context().add_class("normal-btn")
+            allow_btn.set_tooltip_text("Asks for your password, then runs:\n"
+                                       + b.shell.replace("sudo ", "", 1))
+            allow_btn.connect("clicked", self._on_fw_allow)
+            row.pack_start(allow_btn, False, False, 0)
+        copy_btn = Gtk.Button(label="Copy command")
+        copy_btn.get_style_context().add_class("normal-btn")
+        copy_btn.set_tooltip_text(b.shell)
+        copy_btn.connect("clicked", self._on_fw_copy)
+        row.pack_start(copy_btn, False, False, 0)
+        self._fw_status = Gtk.Label(label="")
+        self._fw_status.set_xalign(0.0)
+        self._fw_status.set_line_wrap(True)
+        self._fw_status.get_style_context().add_class("settings-desc")
+        row.pack_start(self._fw_status, True, True, 0)
+        card.pack_start(row, False, False, 0)
+        return card
+
+    def _on_fw_copy(self, _btn):
+        b = getattr(self, "_fw_block", None)
+        if b is None:
+            return
+        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(b.shell, -1)
+        self._fw_status.set_text("Copied. Paste it into a terminal.")
+
+    def _on_fw_allow(self, btn):
+        from . import firewall
+        b = getattr(self, "_fw_block", None)
+        if b is None:
+            return
+        btn.set_sensitive(False)
+        self._fw_status.set_text("Waiting for your password…")
+
+        def work():
+            err = firewall.allow(b)
+            # Trust the rules, not the exit code: re-read them.
+            still = firewall.hint_block(b.port) if err is None else b
+            GLib.idle_add(self._fw_allow_done, btn, err, still)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _fw_allow_done(self, btn, err, still):
+        if err is None and still is None:
+            self._fw_block = None
+            if self._fw_card is not None:
+                self._fw_card.hide()
+            self._sync_status_lbl.set_text(
+                "Firewall rule added: pairing and incoming clips now work.")
+        else:
+            btn.set_sensitive(True)
+            self._fw_status.set_text(
+                f"Didn't work: {err or 'the port still looks closed'}. "
+                "Try Copy command instead.")
+        return False
+
     def _on_sync_size(self, combo):
         mb = int(combo.get_active_id())
         settings.set_value("sync_max_bytes", mb * 1024 * 1024)
@@ -178,9 +259,8 @@ class SettingsWindow:
             return
         code = engine.enter_pairing()
         extra = ""
-        if getattr(self, "_fw_note", None):
-            extra = ("\nThe firewall above will block this pairing: allow "
-                     "the port first.")
+        if getattr(self, "_fw_block", None):
+            extra = "\nAllow the firewall above first, or pairing will fail."
         self._sync_status_lbl.set_markup(
             f"Pairing code: <b>{code}</b> — enter it on the other device "
             f"within 2 minutes.{GLib.markup_escape_text(extra)}")

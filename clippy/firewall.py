@@ -103,8 +103,29 @@ def _firewalld_allows(port: int) -> Optional[bool]:
     return f"{port}/tcp" in out.split()
 
 
-def blocking(port: int) -> Optional[str]:
-    """A note naming the firewall and the command that opens ``port``, or None.
+class Block:
+    """A firewall found dropping inbound ``port``, and how to open it.
+
+    ``argv`` is the root command that opens the port (run through pkexec by
+    the settings window's button, only when the user clicks it); ``shell`` is
+    the same thing as a line to paste into a terminal.
+    """
+
+    def __init__(self, name: str, port: int, scope: str, argv: List[str],
+                 shell: str):
+        self.name, self.port, self.scope = name, port, scope
+        self.argv, self.shell = argv, shell
+
+    def note(self) -> str:
+        """The one-paragraph CLI/log wording (what ``blocking`` returns)."""
+        return (f"{self.name} is active and nothing allows inbound TCP "
+                f"{self.port}, so clips copied on your other devices are "
+                f"dropped before Clippy sees them. Allow it on your LAN:\n"
+                f"    {self.shell}")
+
+
+def find_block(port: int) -> Optional[Block]:
+    """The firewall dropping inbound ``port``, or None.
 
     None means "no problem found", which includes "no firewall we recognise"
     and "we could not read the rules" -- this is a hint, never a gate.
@@ -112,22 +133,60 @@ def blocking(port: int) -> Optional[str]:
     if sys.platform != "linux":
         return None
     if _service_active("ufw") and _ufw_drops_input() and not _ufw_allows(port):
-        return (
-            f"ufw is active and nothing allows inbound TCP {port}, so clips "
-            f"copied on your other devices are dropped before Clippy sees "
-            f"them. Allow it on your LAN:\n"
-            f"    sudo ufw allow from {_lan_cidr()} to any port {port} "
-            f"proto tcp comment 'Clippy LAN sync'"
-        )
+        cidr = _lan_cidr()
+        argv = ["ufw", "allow", "from", cidr, "to", "any", "port", str(port),
+                "proto", "tcp", "comment", "Clippy LAN sync"]
+        shell = (f"sudo ufw allow from {cidr} to any port {port} "
+                 f"proto tcp comment 'Clippy LAN sync'")
+        return Block("ufw", port, cidr, argv, shell)
     if _service_active("firewalld") and _firewalld_allows(port) is False:
-        return (
-            f"firewalld is active and TCP {port} is not open, so clips copied "
-            f"on your other devices are dropped before Clippy sees them. Allow "
-            f"it:\n"
-            f"    sudo firewall-cmd --permanent --zone=home --add-port={port}/tcp"
-            f" && sudo firewall-cmd --reload"
-        )
+        cmd = (f"firewall-cmd --permanent --zone=home --add-port={port}/tcp"
+               f" && firewall-cmd --reload")
+        return Block("firewalld", port, "the home zone", ["sh", "-c", cmd],
+                     f"sudo sh -c '{cmd}'")
     return None
+
+
+def blocking(port: int) -> Optional[str]:
+    """:func:`find_block` as the note printed by the CLI and the daemon log."""
+    b = find_block(port)
+    return b.note() if b else None
+
+
+def can_elevate() -> bool:
+    """Whether a GUI can ask for root here (pkexec + a polkit agent's job)."""
+    return sys.platform == "linux" and shutil.which("pkexec") is not None
+
+
+def allow(block: Block, timeout: float = 180.0) -> Optional[str]:
+    """Run ``block.argv`` as root through pkexec. None on success, else why.
+
+    Only ever called from an explicit user click: the polkit prompt is the
+    consent, and the rule is the same LAN-scoped one we print everywhere else.
+    """
+    try:
+        p = subprocess.run(["pkexec", *block.argv], capture_output=True,
+                           text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if p.returncode == 0:
+        return None
+    if p.returncode in (126, 127):      # pkexec: dismissed / not authorised
+        return "not authorised (the password prompt was cancelled)"
+    return (p.stderr or p.stdout).strip() or f"exit status {p.returncode}"
+
+
+def hint_block(port: Optional[int] = None) -> Optional[Block]:
+    """:func:`find_block` for Clippy's own sync port, honouring CLIPPY_NO_FW_HINT."""
+    if os.environ.get("CLIPPY_NO_FW_HINT"):
+        return None
+    if port is None:
+        from . import config
+        port = config.SYNC_PORT
+    try:
+        return find_block(port)
+    except Exception:
+        return None
 
 
 def _lan_cidr() -> str:
