@@ -114,6 +114,15 @@ class SettingsWindow:
         st = engine.status()
         note(f"This device: {st['device']}  ·  {st['fingerprint']}")
 
+        # Pairing and every clip from a peer arrive inbound. A firewall that
+        # drops them leaves this tab looking healthy, so show the rule here,
+        # selectable, where the user is about to pair.
+        from . import firewall
+        self._fw_note = firewall.hint()
+        if self._fw_note:
+            fw = note("⚠ " + self._fw_note)
+            fw.set_selectable(True)
+
         btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         show_btn = Gtk.Button(label="Show pairing code")
         show_btn.connect("clicked", self._on_show_code)
@@ -168,9 +177,13 @@ class SettingsWindow:
         if engine is None:
             return
         code = engine.enter_pairing()
+        extra = ""
+        if getattr(self, "_fw_note", None):
+            extra = ("\nThe firewall above will block this pairing: allow "
+                     "the port first.")
         self._sync_status_lbl.set_markup(
             f"Pairing code: <b>{code}</b> — enter it on the other device "
-            "within 2 minutes.")
+            f"within 2 minutes.{GLib.markup_escape_text(extra)}")
 
     def _on_pair_clicked(self, _btn):
         engine = getattr(self._controller, "sync", None)

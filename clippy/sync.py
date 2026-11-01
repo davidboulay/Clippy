@@ -284,6 +284,25 @@ def _local_ip() -> str:
         s.close()
 
 
+def _unreachable_error(targets, exc: Optional[BaseException] = None) -> str:
+    """Pairing error for peers whose sync port never answered.
+
+    Pairing is inbound on the code-showing device, so its firewall is the usual
+    suspect (ufw is on by default on Omarchy and Ubuntu). ``targets`` is a list
+    of (name, ip, port).
+    """
+    names = ", ".join(n if n == ip else f"{n} ({ip})" for n, ip, _ in targets)
+    port = targets[0][2] if targets else config.SYNC_PORT
+    why = ""
+    if isinstance(exc, ConnectionRefusedError):
+        why = " (connection refused: is Clippy running there with sync on?)"
+    elif isinstance(exc, (socket.timeout, TimeoutError)):
+        why = " (timed out)"
+    return (f"couldn't reach {names} on TCP {port}{why}. A firewall on that "
+            f"device is the usual cause: on Linux, `clippy status` there "
+            f"prints the rule that allows it.")
+
+
 def _fp_of(pubkey_hex: str) -> str:
     """Short fingerprint of an X25519 public key (same form as the TXT ``fp``
     advertised over mDNS and ``SyncEngine.fingerprint``). Empty on bad input."""
@@ -1282,15 +1301,33 @@ class SyncEngine:
             return {"ok": False,
                     "error": "no devices found on the LAN (mDNS may be blocked — "
                              "retry with the other device's IP: clippy pair CODE IP)"}
+        unreachable = []
         for pid, (ip, port, name) in peers:
             res = self._pair_client(ip, port, code)
             if res.get("ok"):
                 return res
+            if res.get("unreachable"):
+                unreachable.append((name, ip, port))
+        if unreachable and len(unreachable) == len(peers):
+            # Every candidate dropped or refused the connection: nothing ever
+            # compared a code. Saying "no device matched the code" here sent
+            # people re-typing a correct code while the real cause -- the
+            # code-showing device's firewall dropping the pairing connection --
+            # went unnamed.
+            return {"ok": False, "error": _unreachable_error(unreachable)}
         return {"ok": False, "error": "no device in pairing mode matched the code"}
 
     def _pair_client(self, ip, port, code: str) -> dict:
         try:
-            with socket.create_connection((ip, port), timeout=_CONN_TIMEOUT) as s:
+            conn = socket.create_connection((ip, port), timeout=_CONN_TIMEOUT)
+        except OSError as exc:
+            # Never reached the peer's sync port: a timeout is a firewall
+            # dropping the SYN, a refusal is no daemon listening. Either way no
+            # code was checked, and the caller must not report a mismatch.
+            return {"ok": False, "unreachable": True,
+                    "error": _unreachable_error([(ip, ip, port)], exc)}
+        try:
+            with conn as s:
                 s.settimeout(_CONN_TIMEOUT)
                 # SPAKE2 side B: send our message, receive theirs, derive the key.
                 spake = SPAKE2_B(code.encode("utf-8"))
