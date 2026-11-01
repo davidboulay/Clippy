@@ -14,8 +14,8 @@ import sys
 import threading
 from typing import Optional
 
-from . import (clipboard, config, debuglog, ipc, notify, settings, setup, sound,
-               theme, x11clip)
+from . import (clipboard, config, debuglog, ipc, keeper, notify, settings, setup,
+               sound, theme, x11clip)
 from .capture import capture_current
 
 _RETENTION_INTERVAL_SECONDS = 1800  # re-check every 30 min
@@ -321,7 +321,10 @@ def _restore_lost_clip() -> None:
     entry = max(entries, key=lambda e: e.created_at or 0)
     if time.time() - (entry.created_at or 0) > _RESTORE_MAX_AGE:
         return
-    _current_clipboard(str(entry.id))
+    # A real republish, through the panel-recover path. _current_clipboard only
+    # keeps the X11 side in step — with default settings it publishes nothing —
+    # so on its own it never actually put the clip back.
+    keeper.restore(entry)
 
 
 def _current_clipboard(entry_id: str) -> None:
@@ -417,7 +420,17 @@ def _sync_query(engine):
         # _current is handled before the sync check: it has nothing to do with
         # sync and must work when sync is disabled.
         if cmd == "_current":
+            keeper.note_current(arg.strip())
             _current_clipboard(arg.strip())
+            return "ok"
+        if cmd == "_forget":
+            keeper.forget(arg.strip())
+            return "ok"
+        if cmd == "_lost":
+            # Off the IPC thread: a republish can take seconds (wl-copy, the X11
+            # owner's ack), and the watcher hook is waiting on this reply.
+            threading.Thread(target=keeper.on_lost, args=(arg.strip(),),
+                             daemon=True).start()
             return "ok"
         if engine is None:
             return "err sync is disabled"
@@ -568,6 +581,10 @@ def run_daemon() -> int:
         # something else was copied. The in-app updater restarts the daemon, so
         # every update opened exactly that window.
         if eid:
+            # No keeper.note_current here: the watcher reports the clip that is
+            # on the clipboard when it starts, with its CLIPBOARD_STATE, and only
+            # that path knows whether it is sensitive. Marking it from this
+            # thread could race that hook and re-arm a withdrawn password.
             _current_clipboard(str(eid))
         else:
             _restore_lost_clip()

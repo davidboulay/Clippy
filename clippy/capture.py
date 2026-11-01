@@ -69,6 +69,13 @@ def _should_play_sound(entry_id: int) -> bool:
                 pass
 
 
+def mute_echo(entry_id: int) -> None:
+    """Silence the capture that our own republish of ``entry_id`` is about to
+    cause. Recording it as just played is exactly what the debounce checks, so
+    the echo that follows within ``_SOUND_DEBOUNCE`` stays quiet."""
+    _should_play_sound(entry_id)
+
+
 # Magic bytes per image type. Reading our own clip back through data-control can
 # return the payload with a 4-byte little-endian length prefix glued on the front
 # (measured: `d6 a6 07 00` + a 501462-byte PNG, i.e. the length itself). That is

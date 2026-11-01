@@ -1094,45 +1094,9 @@ class Panel:
         self.hide()
 
     def _restore_to_clipboard(self, entry: Entry, mode: str) -> bool:
-        """Put ``entry`` back on the clipboard. False if it couldn't be done.
-
-        Each step is guarded separately: reading a blob that has gone missing is
-        a different failure from the clipboard write, and only the former means
-        the history row is now a dead reference."""
-        from . import debuglog
-        try:
-            if entry.is_file and entry.image_path:
-                # Stage a copy under the original filename so the pasted file
-                # isn't named after its content hash (the blob's name).
-                path = storage.paste_path(entry) or entry.image_path
-                if not Path(path).exists():
-                    debuglog.log("recover.blob_missing", id=entry.id, path=path)
-                    return False
-                clipboard.copy_file(path)
-            elif entry.is_image and entry.image_path:
-                try:
-                    data = Path(entry.image_path).read_bytes()
-                except OSError:
-                    debuglog.log("recover.blob_missing", id=entry.id,
-                                 path=entry.image_path)
-                    return False
-                clipboard.copy_image(data, entry.mime or "image/png")
-            else:
-                always_plain = bool(settings.get("always_plain_text"))
-                use_rich = (
-                    entry.html
-                    and mode != "plain"
-                    and (mode == "rich" or not always_plain)
-                )
-                if use_rich:
-                    clipboard.copy_html(entry.html, entry.text)
-                else:
-                    clipboard.copy_text(entry.text or "")
-        except OSError as exc:
-            debuglog.log("recover.failed", id=entry.id, error=exc)
-            return False
-        debuglog.log("recover.ok", id=entry.id, kind=entry.kind, mode=mode)
-        return True
+        """Put ``entry`` back on the clipboard. False if it couldn't be done."""
+        from . import keeper
+        return keeper.put_back(entry, mode)
 
     def show_context_menu(self, entry: Entry, _event=None) -> None:
         """Populate and reveal the inline action bar for an entry."""

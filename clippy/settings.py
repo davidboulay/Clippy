@@ -15,6 +15,10 @@ DEFAULTS: Dict[str, Any] = {
     # Which copy sound to play (see sound.SOUND_CHOICES).
     "sound_choice": "tap",
     "always_plain_text": False,
+    # Put the last clip back when the clipboard goes empty because the app it
+    # was copied from closed (see keeper.py). Desktops with their own keeper
+    # (Klipper, GNOME) rarely trigger it; turn it off to leave theirs alone.
+    "keep_clipboard": True,
     # Offer a recovered image as a *file* as well as raw bytes. File-drop targets
     # (COSMIC Files, the VS Code Explorer) can only paste an image that way, but
     # chat apps that accept both make one attachment per flavor — Slack shows the

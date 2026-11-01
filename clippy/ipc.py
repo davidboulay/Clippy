@@ -23,7 +23,8 @@ VALID_COMMANDS = {
     "open-settings", "reload-settings",
 }
 # Query commands: handled synchronously; the reply carries data.
-QUERY_COMMANDS = {"peers", "sync-status", "pair", "_broadcast", "_current"}
+QUERY_COMMANDS = {"peers", "sync-status", "pair", "_broadcast", "_current",
+                  "_lost", "_forget"}
 
 _MAX_REPLY = 1 << 16
 
