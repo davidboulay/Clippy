@@ -49,7 +49,16 @@ class World:
         clipboard.copy_text = lambda text: self.copied.append(("text", text))
         clipboard.copy_html = lambda html, text=None: self.copied.append(("html", html))
         capture.mute_echo = lambda eid: self.muted.append(eid)
+        self.offered = []                 # what the clipboard offers after the grace
+        self.during_grace = None          # something that happens while the keeper waits
+        clipboard.list_types = lambda: list(self.offered)
+        keeper._sleep = self._sleep
         keeper._reset_for_tests()
+
+    def _sleep(self, _seconds):
+        if self.during_grace:
+            action, self.during_grace = self.during_grace, None
+            action()
 
 
 def test_keeper():
@@ -100,6 +109,48 @@ def test_keeper():
     check("garbage id ignored", keeper._last_id, 8)
 
 
+def test_grace():
+    """Repeat copies in Chromium/Electron apps: nil, then the new clip ~3 ms later."""
+    print("grace period (repeat copy in Slack/Chrome/Electron)")
+    w = World()
+    w.history[7] = entry(7, "previous Slack cut")
+    w.history[9] = entry(9, "the new cut")
+    check("grace is short (< 1 s)", 0 < keeper._GRACE < 1, True)
+
+    keeper.note_current(7)
+    w.during_grace = lambda: keeper.note_current(9)   # the new copy gets captured
+    check("new copy captured during grace: no restore", keeper.on_lost("nil"), False)
+    check("  the new copy is not overwritten", w.copied, [])
+    check("  and stays current", keeper._last_id, 9)
+
+    keeper._reset_for_tests()
+    keeper.note_current(7)
+    w.offered = ["text/plain"]                        # capture slow, but it's there
+    check("clipboard refilled, not yet captured: no restore",
+          keeper.on_lost("nil"), False)
+    check("  nothing written", w.copied, [])
+    w.offered = []
+
+    keeper._reset_for_tests()
+    keeper.note_current(7)
+    w.during_grace = lambda: keeper.forget("uncaptured")
+    check("uncaptured copy during grace: no restore", keeper.on_lost("nil"), False)
+
+    keeper._reset_for_tests()
+    keeper.note_current(7)
+    def boom():
+        raise OSError("wl-paste missing")
+    clipboard.list_types = boom
+    check("can't tell if empty: no restore", keeper.on_lost("nil"), False)
+    clipboard.list_types = lambda: list(w.offered)
+
+    keeper._reset_for_tests()
+    keeper.note_current(7)
+    check("still empty after grace (app closed): restores",
+          keeper.on_lost("nil"), True)
+    check("  the clip that was lost", w.copied, [("text", "previous Slack cut")])
+
+
 def run_store(state, captured):
     """Run the _store hook as wl-paste would, recording the IPC it sends."""
     sent = []
@@ -135,6 +186,7 @@ def test_hook():
 
 def main():
     test_keeper()
+    test_grace()
     test_hook()
     if FAILURES:
         print("\n".join(["", "FAILED:"] + FAILURES))
