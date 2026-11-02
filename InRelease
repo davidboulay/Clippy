@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: all
+Codename: stable
+Components: main
+Date: Mon, 02 Nov 2026 20:40:10 +0000
+Label: Clippy
+Origin: Clippy
+Suite: stable
+MD5Sum:
+ bb1800c86e9a3a179c5b62bef1e56843            48639 Packages
+ 038ff475b2ffdb815692243097e2a603             5960 Packages.gz
+ 545e1cb5e2477c4a0fad3099dc2914d4              134 Release
+SHA1:
+ 6eeda84010b3a6afb2bd0ff8e65b04426b348be7            48639 Packages
+ d3b8c0c8f1b04d16c712140c03a539780d8a1046             5960 Packages.gz
+ 3b486b255069cf25e945bfea4b2bae45f8008fa6              134 Release
+SHA256:
+ 16060d47639a16c1d672d88d44485ab198ad3589ae9851f39a924b865d6307b7            48639 Packages
+ fb6642e5deb2c89d58dae280d70b382ae68aec9f35fb456b2b8ea403d91f5d79             5960 Packages.gz
+ e632fcea34306855f5a84e0087741cbee7d881906f1a67e1f110bf2e3803b71a              134 Release
+SHA512:
+ 661d377492edd27cb7f43588b42fae85ed358f89f7f50fa5d4f1ddd7a0d10b946fa1ca6082bc5019421c70cd3b6e34f11439b818af87dac5d093c3c846c41561            48639 Packages
+ 196b15fc6410ac6b5baaf6f1b654b377ca8df8bc5e0ebbb86b381df962cb105e718757cf16815f578c6ff73994c299e10f3f059eb59e83f717e471281867a601             5960 Packages.gz
+ 4ac3d4dcbb6c687392b27d3d65e799cf928b961204227c27527403a11ddff7c3084df0452a07be953c252c9565d1b9af7c449c308b4872b188eabc9c929b335c              134 Release
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEESglAzrIoQzoqsiBrOyybPqXOJnEFAmro9SoACgkQOyybPqXO
+JnE/fxAAmDlg1Sdp5bckBBzn/4k/RceTlRaI3K2Zv5T/mYACNKJ+RWctY7ayww9v
+CbiozAdcx/dIQQL3o7ACfJ3LFOnsHz4s/dAulWrOIi6CfQ57FrEx8bWsUn0dPqaB
+AonJzWrBf0xj768P9F2dwklQywhgYGxiqPvjcAMzunG9DcO5jdAS0VI/4coGz8l6
+inNBwppCHdtcLVmy5KyUNbdCGW0+T05887B3RiDkXgEAGE7kr9sRMoPzH0633dsB
+c1feB1+EkrzvFjC8NwwF/ZhmiJF5Wx6yL4YUKMlsNhmM0eooKWqJpcZnSO5XC+x5
+alujXO/yOG9N2kW1LMQP7gsg7OUVKwsNbOJhzUc/zX/TX1MQfseso/Ppw7R1Cgp0
+mf4XsgsQj7BeAenVfLxJObpboZWzLc/cLP2t6YDONQK4zluSFYY2dJDweqg2PP6Q
+TqqAS6ksLlPsmgbG3NaiPUCs6ReCrgoPMKOORiGOWZQlPWyoipFqX0XCBZMP5iCd
+rVSyy6yJt6Qfx6NwF3DHoc+oZgfmE6tUAQrTHTSHPNGdoJWrab+ckd713+JTdbEd
+k90ryagDXdwz5iCTfyTvjbCVz4DfCZDCxTSTmVyVN9Ra2zxgS0Sl2ixu9IIRclqD
+RoK4Bi3g/kAFVMTKCw7ttW/Rbjc3JK3fxC6xuxC1FWafnP0bWdw=
+=0lwI
+-----END PGP SIGNATURE-----
