@@ -29,6 +29,16 @@ What it deliberately does *not* put back:
     clip the user had already replaced;
   * a clip deleted from history in the meantime.
 
+An empty clipboard is not proof the owner is gone. Chromium and every Electron
+app (Slack, VS Code, Discord, Chrome itself) drop their old selection and offer
+the new one a few milliseconds later whenever you copy again while they still
+own the clipboard: measured on KWin 2026-11-02, Slack sends ``nil`` then
+``data`` 3 ms apart on every repeat copy. Restoring on that ``nil`` landed our
+old clip on top of the new one, and the copy the user just made was gone before
+anything (Clippy included) could read it. So the keeper waits ``_GRACE``
+seconds and only restores if nothing happened meanwhile *and* the clipboard is
+still empty.
+
 Restores are rate-capped, so a compositor or app that keeps emptying the
 clipboard costs a few republishes rather than a loop. GTK-free: the daemon runs
 it on the IPC thread, and ``put_back`` is shared with the panel.
@@ -48,6 +58,24 @@ _restore_times: List[float] = []
 
 _RESTORE_MAX = 3        # restores allowed per window before we stand down
 _RESTORE_WINDOW = 60    # seconds
+_GRACE = 0.3            # seconds an empty clipboard must stay empty (Slack: 3 ms)
+_generation = 0         # bumped by every clipboard event the daemon hears of
+_sleep = time.sleep     # swapped out by the tests
+
+
+def _bump() -> int:
+    global _generation
+    with _lock:
+        _generation += 1
+        return _generation
+
+
+def _still_empty() -> bool:
+    """Whether the clipboard offers nothing at all right now."""
+    try:
+        return not clipboard.list_types()
+    except Exception:   # a backend error is not evidence of an empty clipboard
+        return False
 
 
 def put_back(entry, mode: str = "auto") -> bool:
@@ -98,6 +126,7 @@ def note_current(entry_id) -> None:
         eid = int(entry_id)
     except (TypeError, ValueError):
         return
+    _bump()
     with _lock:
         _last_id = eid
 
@@ -105,6 +134,7 @@ def note_current(entry_id) -> None:
 def forget(reason: str = "") -> None:
     """The clipboard holds something we must not (or cannot) put back."""
     global _last_id
+    _bump()
     with _lock:
         _last_id = None
     debuglog.log("keeper.forget", reason=reason)
@@ -139,6 +169,19 @@ def on_lost(state: str) -> bool:
         return False
     if not settings.get("keep_clipboard"):
         return False
+    # Give a copy in progress time to land: an app replacing its own selection
+    # empties the clipboard for a few ms first, and restoring then destroys the
+    # copy the user just made.
+    gen = _bump()
+    _sleep(_GRACE)
+    with _lock:
+        superseded = _generation != gen
+    if superseded:
+        debuglog.log("keeper.skip", reason="superseded")
+        return False
+    if not _still_empty():
+        debuglog.log("keeper.skip", reason="refilled")
+        return False
     with _lock:
         eid = _last_id
         if eid is None:
@@ -160,7 +203,8 @@ def on_lost(state: str) -> bool:
 
 
 def _reset_for_tests() -> None:
-    global _last_id
+    global _last_id, _generation
     with _lock:
         _last_id = None
+        _generation = 0
         _restore_times.clear()
