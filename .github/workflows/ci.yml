@@ -42,6 +42,9 @@ jobs:
       - name: Recover flavors (plain text beside html, ownership digests)
         run: PYTHONPATH=. python scripts/recover_flavors_test.py
 
+      - name: Clipboard keeper (restore on owner exit; never after clear/sensitive; never over a copy in progress)
+        run: PYTHONPATH=. python scripts/keep_clipboard_test.py
+
       - name: Storage migration (UNIQUE(kind, hash) rebuild preserves history)
         run: PYTHONPATH=. python scripts/storage_migration_test.py
 
