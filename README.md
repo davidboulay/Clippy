@@ -12,7 +12,7 @@ with end-to-end-encrypted sync between your machines.
 [![Platforms](https://img.shields.io/badge/Linux%20%C2%B7%20macOS-FC6F8C?style=flat-square&labelColor=1c1c1e&label=runs%20on)](#get-clippy)
 [![License](https://img.shields.io/github/license/davidboulay/Clippy?style=flat-square&color=6b7280&labelColor=1c1c1e)](LICENSE)
 
-[**Install**](#get-clippy) · [Features](#features) · [Shortcuts](#using-the-panel) · [Device sync](#cross-device-clipboard-sync) · [Troubleshooting](#when-a-clip-wont-paste) · [Security](SECURITY.md)
+[**Install**](#get-clippy) · [Features](#features) · [Shortcuts](#using-the-panel) · [Device sync](#cross-device-clipboard-sync) · [Troubleshooting](#when-a-clip-wont-paste) · [Security](SECURITY.md) · [Project page](https://davidboulay.com/apps/clippy/)
 
 </div>
 
