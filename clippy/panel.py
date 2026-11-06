@@ -360,7 +360,7 @@ class Tile(Gtk.EventBox):
             # footer carries the filename (matches macOS: name only, middle-
             # truncated by the caller so the extension stays visible).
             if entry.is_file and entry.filename:
-                return entry.filename
+                return entry.file_label
             return f"{when}  ·  {human}"
         text = entry.text or ""
         lines = text.count("\n") + 1

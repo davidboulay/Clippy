@@ -88,11 +88,20 @@ def put_back(entry, mode: str = "auto") -> bool:
         if entry.is_file and entry.image_path:
             # Stage a copy under the original filename so the pasted file
             # isn't named after its content hash (the blob's name).
-            path = storage.paste_path(entry) or entry.image_path
-            if not Path(path).exists():
-                debuglog.log("recover.blob_missing", id=entry.id, path=path)
-                return False
-            clipboard.copy_file(path)
+            if entry.is_group:
+                # Every file of a multi-file copy, as one clipboard offer.
+                paths = [p for p in storage.paste_paths(entry) if Path(p).exists()]
+                if not paths:
+                    debuglog.log("recover.blob_missing", id=entry.id,
+                                 path=entry.image_path)
+                    return False
+                clipboard.copy_files(paths)
+            else:
+                path = storage.paste_path(entry) or entry.image_path
+                if not Path(path).exists():
+                    debuglog.log("recover.blob_missing", id=entry.id, path=path)
+                    return False
+                clipboard.copy_file(path)
         elif entry.is_image and entry.image_path:
             try:
                 data = Path(entry.image_path).read_bytes()

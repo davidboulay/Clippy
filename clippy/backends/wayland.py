@@ -301,12 +301,13 @@ class WaylandBackend:
         return Path(os.path.abspath(path)).as_uri()
 
     @classmethod
-    def _file_parts(cls, path: str) -> List[tuple]:
-        """The two flavors a file-drop target understands, for one path."""
-        uri = cls._file_uri(path)
+    def _file_parts(cls, *paths: str) -> List[tuple]:
+        """The two flavors a file-drop target understands, for one or more paths."""
+        uris = [cls._file_uri(p) for p in paths]
         return [
-            ("text/uri-list", (uri + "\r\n").encode("utf-8")),
-            ("x-special/gnome-copied-files", ("copy\n" + uri).encode("utf-8")),
+            ("text/uri-list", "".join(u + "\r\n" for u in uris).encode("utf-8")),
+            ("x-special/gnome-copied-files",
+             ("copy\n" + "\n".join(uris)).encode("utf-8")),
         ]
 
     def mirror_to_x11(self, mime: Optional[str], data: bytes) -> None:
@@ -393,38 +394,49 @@ class WaylandBackend:
         return []
 
     def copy_file(self, path: str) -> None:
+        self.copy_files([path])
+
+    def copy_files(self, paths: List[str]) -> None:
+        paths = [p for p in paths if p]
+        if not paths:
+            return
+        path = paths[0]
         # Offer the file the way file managers expect: a gnome-copied-files list
         # plus a uri-list, so pasting in Files/Nautilus drops the actual file.
         # The persistent owner carries both at once and keeps serving them; the
-        # fallback below can only put one on each channel.
-        parts = self._file_parts(path)
+        # fallback below can only put one on each channel. Several files go in
+        # the same two flavors, one URI per file.
+        parts = self._file_parts(*paths)
         # If the file IS an image, also offer its raw bytes. A screenshot tool
         # (macOS CleanShot, some Linux ones) copies a file *reference* to the
         # image, not image data, so it arrives here as a file — and pasting a
         # file:// URI into a chat/editor (Claude Desktop, Slack) drops a link,
         # not a picture. Offering image/png alongside the file lets image
         # targets take the picture while file managers still take the file.
-        img = self._image_bytes_for(path)
+        # Only a single file can stand in for an image; a set of files is files.
+        img = self._image_bytes_for(path) if len(paths) == 1 else None
         if img is not None:
             parts = [img] + parts
         published = x11clip.publish_parts(parts)
         if published:
-            # Track the file's *content* hash: that is what capture stores for a
-            # file clip (storage.add_file_from_path), so it's the digest our own
-            # echo arrives with. Without it the echo looked like someone else's
-            # copy and released the selection we had just taken.
-            try:
-                import hashlib
-                h = hashlib.sha256()
-                with open(path, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                        h.update(chunk)
-                x11clip.note_published(h.hexdigest())
-            except OSError:
-                pass
+            # Track the files' *content* hashes: that is what capture stores for
+            # a file clip (storage.add_file_from_path), so it's the digest our
+            # own echo arrives with. Without it the echo looked like someone
+            # else's copy and released the selection we had just taken.
+            digests = []
+            for one in paths:
+                try:
+                    import hashlib
+                    h = hashlib.sha256()
+                    with open(one, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                            h.update(chunk)
+                    digests.append(h.hexdigest())
+                except OSError:
+                    pass
+            x11clip.note_published(*digests)
             if self._x11_owner_is_enough():
                 return
-        uri = self._file_uri(path)
         # Set the Wayland selection too: outside cosmic-comp the owner above
         # covers XWayland only, so without this a pasted file reaches nothing
         # native.
@@ -452,7 +464,8 @@ class WaylandBackend:
         if img is not None and not settings.get("image_file_flavors"):
             wl_type, wl_data = img
         else:
-            wl_type, wl_data = "text/uri-list", (uri + "\r\n").encode("utf-8")
+            wl_type = "text/uri-list"
+            wl_data = dict(parts)[wl_type]
         subprocess.run(["wl-copy", "--type", wl_type],
                        input=wl_data, timeout=_WRITE_TIMEOUT)
         if not published:

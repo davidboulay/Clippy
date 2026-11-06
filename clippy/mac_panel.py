@@ -324,7 +324,10 @@ def _load_entry(entry, mode="auto"):
         if entry.is_file and entry.image_path:
             # Put the file back under its ORIGINAL name, not the content-hash
             # blob name (storage.paste_path stages a correctly-named copy).
-            clipboard.copy_file(storage.paste_path(entry) or entry.image_path)
+            if entry.is_group:
+                clipboard.copy_files(storage.paste_paths(entry))
+            else:
+                clipboard.copy_file(storage.paste_path(entry) or entry.image_path)
         elif entry.is_image and entry.image_path:
             clipboard.copy_image(Path(entry.image_path).read_bytes(),
                                  entry.mime or "image/png")
@@ -566,7 +569,9 @@ def _make_tile(entry):
     # footer: the file name for files/images (the preview hides it otherwise),
     # else relative time + size/chars.
     if entry.is_file or entry.is_image:
-        fname = entry.filename or os.path.basename(entry.image_path or "") or "file"
+        fname = (entry.file_label if entry.is_file and entry.filename
+                 else entry.filename or os.path.basename(entry.image_path or "")
+                 or "file")
         footer = _label(fname, 10, NSColor.secondaryLabelColor())
         from AppKit import NSLineBreakByTruncatingMiddle
         footer.setLineBreakMode_(NSLineBreakByTruncatingMiddle)  # keep the extension

@@ -208,10 +208,17 @@ def capture_current():
         # first is the primary — its id is what gets broadcast and sounded — and
         # the others are stored so they're in history too. Capped because a
         # "select all" in a large folder would otherwise hash the whole thing.
-        for src in file_paths[:_MAX_FILES]:
+        # Files copied together share a group id, so history shows them as one
+        # clip, recovering it puts every file back and sync sends them all.
+        import uuid
+        chosen = file_paths[:_MAX_FILES]
+        group_id = uuid.uuid4().hex if len(chosen) > 1 else None
+        for pos, src in enumerate(chosen):
             name = os.path.basename(src) or "file"
             mime = mimetypes.guess_type(src)[0] or "application/octet-stream"
-            stored = storage.add_file_from_path(src, name, mime)
+            stored = storage.add_file_from_path(
+                src, name, mime, group_id=group_id,
+                group_pos=pos if group_id else None)
             if new_id is None:
                 new_id = stored
     elif image_mime and not _image_is_a_preview(types):

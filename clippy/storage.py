@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS entries (
     mime        TEXT,                        -- source MIME type
     image_path  TEXT,                        -- blob file path (image/file entries)
     filename    TEXT,                        -- original name (file entries)
+    group_id    TEXT,                        -- files copied together share it
+    group_pos   INTEGER,                     -- order within that copy
     hash        TEXT    NOT NULL,            -- sha256 of content
     size        INTEGER NOT NULL DEFAULT 0,  -- bytes
     pinned      INTEGER NOT NULL DEFAULT 0,
@@ -62,10 +64,26 @@ class Entry:
     created_at: float
     filename: Optional[str] = None
     hash: Optional[str] = None
+    group_id: Optional[str] = None
+    group_pos: Optional[int] = None
+    group_size: int = 1
 
     @property
     def is_image(self) -> bool:
         return self.kind == "image"
+
+    @property
+    def is_group(self) -> bool:
+        """Several files copied together, shown and recovered as one clip."""
+        return self.kind == "file" and bool(self.group_id) and self.group_size > 1
+
+    @property
+    def file_label(self) -> str:
+        """The footer name: ``a.zip`` or ``a.zip + 2 more`` for a group."""
+        name = self.filename or ""
+        if self.is_group:
+            return f"{name} + {self.group_size - 1} more"
+        return name
 
     @property
     def is_file(self) -> bool:
@@ -104,6 +122,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "filename" not in cols:
         conn.execute("ALTER TABLE entries ADD COLUMN filename TEXT")
     _widen_hash_uniqueness(conn)
+    # After the rebuild above, which recreates the table without these: a legacy
+    # database has no groups yet, so nothing is lost by adding them last.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(entries)")}
+    if "group_id" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN group_id TEXT")
+    if "group_pos" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN group_pos INTEGER")
 
 
 def _widen_hash_uniqueness(conn: sqlite3.Connection) -> None:
@@ -162,6 +187,7 @@ def _widen_hash_uniqueness(conn: sqlite3.Connection) -> None:
 
 
 def _row_to_entry(row: sqlite3.Row) -> Entry:
+    keys = row.keys()
     return Entry(
         id=row["id"],
         kind=row["kind"],
@@ -174,7 +200,25 @@ def _row_to_entry(row: sqlite3.Row) -> Entry:
         created_at=row["created_at"],
         filename=row["filename"] if "filename" in row.keys() else None,
         hash=row["hash"] if "hash" in row.keys() else None,
+        group_id=row["group_id"] if "group_id" in keys else None,
+        group_pos=row["group_pos"] if "group_pos" in keys else None,
+        group_size=(row["group_size"] or 1) if "group_size" in keys else 1,
     )
+
+
+# Every read that builds an Entry selects through this, so group_size is always
+# filled in: how many entries share the row's group (1 when it has none).
+_SELECT = """SELECT entries.*,
+    CASE WHEN entries.group_id IS NULL THEN 1 ELSE
+        (SELECT COUNT(*) FROM entries g WHERE g.group_id = entries.group_id)
+    END AS group_size
+    FROM entries"""
+
+# A group is listed once, by its first member still present. MIN rather than
+# "group_pos = 0" so a group whose first file was pruned or deleted on its own
+# doesn't vanish from history with the rest still stored.
+_GROUP_HEAD = """(entries.group_id IS NULL OR entries.group_pos =
+    (SELECT MIN(g.group_pos) FROM entries g WHERE g.group_id = entries.group_id))"""
 
 
 def add_text(text: str, mime: str = "text/plain", html: Optional[str] = None) -> Optional[int]:
@@ -337,8 +381,14 @@ def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> 
 
 
 def add_file_from_path(src: str, name: str,
-                       mime: str = "application/octet-stream") -> Optional[int]:
-    """Store a copied file by streaming it (no full in-RAM read, so 2 GB works)."""
+                       mime: str = "application/octet-stream",
+                       group_id: Optional[str] = None,
+                       group_pos: Optional[int] = None) -> Optional[int]:
+    """Store a copied file by streaming it (no full in-RAM read, so 2 GB works).
+
+    ``group_id``/``group_pos`` tie the files of one multi-file copy together.
+    A file already in history takes the new copy's grouping (or none), since a
+    file belongs to whichever copy it was last part of."""
     import os
     import shutil
     try:
@@ -360,18 +410,24 @@ def add_file_from_path(src: str, name: str,
             "SELECT id FROM entries WHERE kind=? AND hash=?", (kind, digest)
         ).fetchone()
         if existing:
-            conn.execute("UPDATE entries SET created_at=? WHERE id=?",
-                         (now, existing["id"]))
+            conn.execute(
+                "UPDATE entries SET created_at=?, group_id=?, group_pos=? WHERE id=?",
+                (now, group_id, group_pos, existing["id"]))
             return existing["id"]
         if not path.exists():
             shutil.copyfile(src, path)
         row_id = _insert_or_bump(
             conn,
-            """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size, created_at)
-               VALUES ('file', ?, ?, ?, ?, ?, ?, ?)""",
-            (name, mime, str(path), name, digest, size, now),
+            """INSERT INTO entries (kind, text, mime, image_path, filename, hash, size,
+                                    created_at, group_id, group_pos)
+               VALUES ('file', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, mime, str(path), name, digest, size, now, group_id, group_pos),
             kind, digest, now,
         )
+        if row_id is not None and group_id is not None:
+            # _insert_or_bump's collision path only bumps created_at.
+            conn.execute("UPDATE entries SET group_id=?, group_pos=? WHERE id=?",
+                         (group_id, group_pos, row_id))
         _prune_count(conn)
         return row_id
 
@@ -381,7 +437,7 @@ def list_entries(query: str = "", limit: int = config.MAX_HISTORY,
     """Return entries newest-first (pinned first). With a query, only matching
     text entries are returned. ``pinned`` filters by pin state: True for pinned
     only, False for unpinned only, None for both."""
-    clauses: List[str] = []
+    clauses: List[str] = [_GROUP_HEAD]
     params: List[object] = []
     if query:
         clauses.append("kind='text' AND text LIKE ? COLLATE NOCASE")
@@ -393,7 +449,7 @@ def list_entries(query: str = "", limit: int = config.MAX_HISTORY,
     params.append(limit)
     with _connect() as conn:
         rows = conn.execute(
-            f"""SELECT * FROM entries{where}
+            f"""{_SELECT}{where}
                 ORDER BY pinned DESC, created_at DESC LIMIT ?""",
             params,
         ).fetchall()
@@ -413,8 +469,30 @@ def count(pinned: Optional[bool] = None) -> int:
 
 def get(entry_id: int) -> Optional[Entry]:
     with _connect() as conn:
-        row = conn.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
+        row = conn.execute(f"{_SELECT} WHERE entries.id=?", (entry_id,)).fetchone()
     return _row_to_entry(row) if row else None
+
+
+def group_members(entry) -> List[Entry]:
+    """Every entry of ``entry``'s multi-file copy in copy order, or [entry]."""
+    gid = getattr(entry, "group_id", None)
+    if not gid:
+        return [entry]
+    with _connect() as conn:
+        rows = conn.execute(
+            f"{_SELECT} WHERE entries.group_id=? ORDER BY entries.group_pos, entries.id",
+            (gid,)).fetchall()
+    return [_row_to_entry(r) for r in rows] or [entry]
+
+
+def paste_paths(entry) -> List[str]:
+    """``paste_path`` for every file of the entry's copy, in copy order."""
+    out = []
+    for m in group_members(entry):
+        p = paste_path(m) if m.is_file else None
+        if p:
+            out.append(p)
+    return out
 
 
 def find_by_hash(digest: str, kind: str) -> Optional[int]:
@@ -461,9 +539,10 @@ def paste_path(entry) -> Optional[str]:
 def touch(entry_id: int) -> None:
     """Bump an entry's created_at to now (move it to the front of history) —
     used when an old clip is recovered from the panel."""
+    now = time.time()
     with _connect() as conn:
-        conn.execute("UPDATE entries SET created_at=? WHERE id=?",
-                     (time.time(), entry_id))
+        conn.executemany("UPDATE entries SET created_at=? WHERE id=?",
+                         [(now, i) for i in _group_ids(conn, entry_id)])
 
 
 def latest_created_at() -> float:
@@ -476,14 +555,27 @@ def latest_created_at() -> float:
         return row["m"] if row and row["m"] is not None else 0.0
 
 
+def _group_ids(conn: sqlite3.Connection, entry_id: int) -> List[int]:
+    """The entry's id plus those of the rest of its multi-file copy: a group is
+    one tile, so deleting or pinning it acts on every file in it."""
+    row = conn.execute("SELECT group_id FROM entries WHERE id=?",
+                       (entry_id,)).fetchone()
+    if not row or not row["group_id"]:
+        return [entry_id]
+    return [r["id"] for r in conn.execute(
+        "SELECT id FROM entries WHERE group_id=?", (row["group_id"],))]
+
+
 def delete(entry_id: int) -> None:
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT image_path FROM entries WHERE id=?", (entry_id,)
-        ).fetchone()
-        conn.execute("DELETE FROM entries WHERE id=?", (entry_id,))
-    if row and row["image_path"]:
-        _maybe_unlink(Path(row["image_path"]))
+        ids = _group_ids(conn, entry_id)
+        rows = conn.execute(
+            f"SELECT image_path FROM entries WHERE id IN ({','.join('?' * len(ids))})",
+            ids).fetchall()
+        conn.executemany("DELETE FROM entries WHERE id=?", [(i,) for i in ids])
+    for row in rows:
+        if row["image_path"]:
+            _maybe_unlink(Path(row["image_path"]))
 
 
 def toggle_pin(entry_id: int) -> bool:
@@ -494,7 +586,8 @@ def toggle_pin(entry_id: int) -> bool:
         if not row:
             return False
         new = 0 if row["pinned"] else 1
-        conn.execute("UPDATE entries SET pinned=? WHERE id=?", (new, entry_id))
+        conn.executemany("UPDATE entries SET pinned=? WHERE id=?",
+                         [(new, i) for i in _group_ids(conn, entry_id)])
         return bool(new)
 
 

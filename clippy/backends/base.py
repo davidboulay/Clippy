@@ -38,6 +38,12 @@ class ClipboardBackend(Protocol):
         """Put a file reference on the clipboard (so apps paste the file)."""
         ...
 
+    def copy_files(self, paths: List[str]) -> None:
+        """Put several file references on the clipboard as one copy, so a paste
+        drops them all. Backends that can't hold a set put the first file."""
+        if paths:
+            self.copy_file(paths[0])
+
     def start_watch(self, on_change: Callable[[], None]) -> None:
         """Begin watching for clipboard changes, calling ``on_change`` on each.
 
