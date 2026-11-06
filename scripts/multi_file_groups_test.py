@@ -13,7 +13,10 @@ copy share a group:
   4. sync sends every member tagged with the group, and the receiver puts them
      on its clipboard together, once, in order;
   5. an incomplete group still reaches the clipboard after the wait;
-  6. a peer's group fields are validated.
+  6. a peer's group fields are validated;
+  7. names survive: a file selected twice in one copy (Finder's "x (1).dmg"
+     beside "x.dmg") keeps the plain name, and a received file keeps its
+     original name instead of "x (4).zip" when received/ already has one.
 
 Runs against a throwaway XDG data dir, never the real history.
 
@@ -104,6 +107,30 @@ storage.delete(ids[1])
 check("delete removes the whole group",
       [storage.get(i) for i in ids[:2]], [None, None])
 storage.delete(single)
+
+print("1b. the same file twice in one copy")
+dup_src = src / "dups"
+dup_src.mkdir()
+(dup_src / "Typora (1).dmg").write_bytes(b"typora bytes")
+(dup_src / "Typora.dmg").write_bytes(b"typora bytes")
+(dup_src / "Notes.txt").write_bytes(b"notes")
+dgid = "cd" * 16
+order = ["Typora (1).dmg", "Notes.txt", "Typora.dmg"]
+dids = [storage.add_file_from_path(str(dup_src / n), n, "application/octet-stream",
+                                   group_id=dgid, group_pos=i)
+        for i, n in enumerate(order)]
+check("stored once", dids[0] == dids[2], True)
+check("under the name without the copy suffix", storage.get(dids[0]).filename,
+      "Typora.dmg")
+check("at its first position", storage.get(dids[0]).group_pos, 0)
+storage.delete(dids[0])
+egid = "ef" * 16
+order = ["Typora.dmg", "Typora (1).dmg"]
+eids = [storage.add_file_from_path(str(dup_src / n), n, "application/octet-stream",
+                                   group_id=egid, group_pos=i)
+        for i, n in enumerate(order)]
+check("plain name first: it stays", storage.get(eids[0]).filename, "Typora.dmg")
+storage.delete(eids[0])
 
 print("2. capture")
 clipboard.list_types = lambda: ["text/uri-list"]
@@ -204,6 +231,43 @@ else:
     time.sleep(1.0)
     check("a straggler puts the fuller set on, in order",
           injected[-1], [str(late2), str(late)])
+
+    print("  received file names")
+    import hashlib
+    import shutil
+
+    def receive(name, data, group=None):
+        tmp = _TMP / "incoming.tmp"
+        tmp.write_bytes(data)
+        man = {"kind": "file", "mime": "application/zip", "name": name,
+               "hash": hashlib.sha256(data).hexdigest(), "size": len(data)}
+        if group:
+            man.update(group)
+        singles.clear()
+        B._store_and_inject_media(man, str(tmp))
+        return singles[-1] if singles else None
+
+    clash = config.RECV_DIR / "Equalizer-1.3.0.110.zip"
+    clash.write_bytes(b"some older, different file")
+    got = receive("Equalizer-1.3.0.110.zip", b"equalizer v1.3")
+    check("keeps its name when received/ already has one",
+          os.path.basename(got or ""), "Equalizer-1.3.0.110.zip")
+    check("with the right bytes", pathlib.Path(got).read_bytes(), b"equalizer v1.3")
+    check("and the other file is left alone", clash.read_bytes(),
+          b"some older, different file")
+    again = receive("Equalizer-1.3.0.110.zip", b"equalizer v1.3")
+    check("received again: the same file, no ' (1)' copy", again, got)
+    check("the stored copy is still there", pathlib.Path(again).read_bytes(),
+          b"equalizer v1.3")
+    other = receive("Equalizer-1.3.0.110.zip", b"equalizer v1.4")
+    check("a different file under that name keeps the name too",
+          os.path.basename(other or ""), "Equalizer-1.3.0.110.zip")
+    check("without touching the first", (other != got,
+          pathlib.Path(got).read_bytes()), (True, b"equalizer v1.3"))
+    evil = receive("..", b"dotdot")
+    check("'..' still lands inside received/",
+          os.path.realpath(evil).startswith(os.path.realpath(config.RECV_DIR) + os.sep),
+          True)
     A.stop(); B.stop()
 
 print()

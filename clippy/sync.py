@@ -909,13 +909,28 @@ class SyncEngine:
                 # outside RECV_DIR by one component.
                 if name in (".", "..") or "/" in name or "\\" in name:
                     name = "file"
-                dest = self._unique_path(config.RECV_DIR / name)
+                # One folder per content hash keeps the ORIGINAL name: a paste
+                # drops the file as it was copied, not "Equalizer (4).zip"
+                # because received/ already held earlier copies. Same name and
+                # hash means the same file, already here: reuse it. The hash was
+                # verified against the bytes, but keep only hex in the path.
+                h = "".join(c for c in str(manifest.get("hash") or "")
+                            if c in "0123456789abcdef")[:32]
+                folder = config.RECV_DIR / h if h else config.RECV_DIR
+                dest = str(folder / name)
                 # Final guard: the resolved path must stay inside RECV_DIR.
                 recv_root = os.path.realpath(config.RECV_DIR)
                 if os.path.commonpath([os.path.realpath(dest), recv_root]) != recv_root:
                     self._safe_unlink(tmp)
                     return
-                shutil.move(tmp, dest)
+                os.makedirs(folder, exist_ok=True)
+                if (h and os.path.isfile(dest)
+                        and os.path.getsize(dest) == os.path.getsize(tmp)):
+                    self._safe_unlink(tmp)
+                else:
+                    if not h:
+                        dest = self._unique_path(dest)
+                    shutil.move(tmp, dest)
                 group = _group_fields(manifest)
                 if group is None:
                     storage.add_file_from_path(str(dest), name, mime)

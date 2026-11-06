@@ -9,6 +9,7 @@ GTK-free so the ``_store`` subprocess stays lightweight.
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -380,6 +381,15 @@ def add_file(data: bytes, name: str, mime: str = "application/octet-stream") -> 
         return row_id
 
 
+# A file manager's "same name already here" suffix: "Typora (1).dmg", "a (2)".
+_COPY_SUFFIX = re.compile(r" \(\d+\)(?=\.[^.]+$|$)")
+
+
+def _plain_name(name: str) -> str:
+    """``name`` without a trailing " (n)" copy suffix (before the extension)."""
+    return _COPY_SUFFIX.sub("", name, count=1)
+
+
 def add_file_from_path(src: str, name: str,
                        mime: str = "application/octet-stream",
                        group_id: Optional[str] = None,
@@ -388,7 +398,12 @@ def add_file_from_path(src: str, name: str,
 
     ``group_id``/``group_pos`` tie the files of one multi-file copy together.
     A file already in history takes the new copy's grouping (or none), since a
-    file belongs to whichever copy it was last part of."""
+    file belongs to whichever copy it was last part of.
+
+    The same file can also appear twice in ONE copy: Finder's "Typora (1).dmg"
+    beside "Typora.dmg", same bytes. It stays one entry at its first position,
+    named without the " (n)" suffix whichever of the two came first, so a paste
+    on the other machine isn't named "Typora (1).dmg"."""
     import os
     import shutil
     try:
@@ -407,8 +422,16 @@ def add_file_from_path(src: str, name: str,
     path = config.FILE_DIR / (digest + _blob_ext(name, mime))
     with _connect() as conn:
         existing = conn.execute(
-            "SELECT id FROM entries WHERE kind=? AND hash=?", (kind, digest)
+            "SELECT id, filename, group_id FROM entries WHERE kind=? AND hash=?",
+            (kind, digest)
         ).fetchone()
+        if existing and group_id is not None and existing["group_id"] == group_id:
+            # A repeat inside the same copy: keep its place, prefer the plain name.
+            old_name = existing["filename"] or ""
+            if name != old_name and _plain_name(old_name) == name:
+                conn.execute("UPDATE entries SET filename=?, text=? WHERE id=?",
+                             (name, name, existing["id"]))
+            return existing["id"]
         if existing:
             conn.execute(
                 "UPDATE entries SET created_at=?, group_id=?, group_pos=? WHERE id=?",
