@@ -16,6 +16,15 @@ import tempfile
 import time
 import uuid
 
+# Run against throwaway XDG dirs, never the real history, received/ files or
+# settings: a received file would otherwise land in the real received/ folder.
+import os as _os  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+_TMP_XDG = _tempfile.mkdtemp(prefix="clippy-sync-test-")
+for _var in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR"):
+    _os.environ[_var] = _os.path.join(_TMP_XDG, _var.lower())
+    _os.makedirs(_os.environ[_var], exist_ok=True)
+
 sys.path.insert(0, ".")
 from clippy import sync          # noqa: E402
 import clippy.storage as st      # noqa: E402
