@@ -83,3 +83,6 @@ jobs:
 
       - name: Delivery hardening self-test
         run: PYTHONPATH=. python scripts/sync_delivery_test.py
+
+      - name: Multi-file copies (group storage, recover, sync)
+        run: PYTHONPATH=. python scripts/multi_file_groups_test.py

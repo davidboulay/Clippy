@@ -215,10 +215,17 @@ class MacBackend:
         return out
 
     def copy_file(self, path: str) -> None:
+        self.copy_files([path])
+
+    def copy_files(self, paths: List[str]) -> None:
+        # One NSURL per file in a single write: Finder pastes them all, the
+        # same as a multi-selection copied with Cmd+C.
         from AppKit import NSURL
-        url = NSURL.fileURLWithPath_(path)
+        urls = [NSURL.fileURLWithPath_(p) for p in paths if p]
+        if not urls:
+            return
         self._pb.clearContents()
-        self._pb.writeObjects_([url])
+        self._pb.writeObjects_(urls)
         self._last_change = self._pb.changeCount()
 
     # -- watch (poll changeCount) ---------------------------------------

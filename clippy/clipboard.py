@@ -65,5 +65,9 @@ def copy_file(path: str) -> None:
     get_backend().copy_file(path)
 
 
+def copy_files(paths: List[str]) -> None:
+    get_backend().copy_files(list(paths))
+
+
 def start_watch(on_change: Callable[[], None]) -> None:
     get_backend().start_watch(on_change)

@@ -260,6 +260,33 @@ def _recv_exact(sock: socket.socket, n: int) -> Optional[bytes]:
     return buf
 
 
+# Multi-file receive: how long after the latest file of a group arrives to put
+# a still-incomplete group on the clipboard anyway, and when to drop the record.
+_GROUP_WAIT = 20.0
+_GROUP_FORGET = 600.0
+# A peer names the group size; bound it like capture bounds a local copy.
+_GROUP_MAX = 25
+
+
+def _group_fields(manifest: dict):
+    """(group id, size, position) from a media manifest, or None when it is a
+    single clip or the fields don't make sense (a peer's data, so checked)."""
+    gid = manifest.get("group")
+    if gid is None:
+        return None
+    try:
+        n = int(manifest.get("group_size"))
+        pos = int(manifest.get("group_pos"))
+    except (TypeError, ValueError):
+        return None
+    if (not isinstance(gid, str) or not 8 <= len(gid) <= 64
+            or not all(c in "0123456789abcdef" for c in gid)):
+        return None
+    if not 2 <= n <= _GROUP_MAX or not 0 <= pos < n:
+        return None
+    return gid, n, pos
+
+
 def _name_with_ext(name: str, mime: str) -> str:
     """Ensure a filename carries an extension matching its MIME type. Apps and
     file managers rely on the extension to recognize the type, and content
@@ -325,6 +352,10 @@ class SyncEngine:
         # Linux the wl-paste watch re-fires capture, so it leaves this unset.
         self._on_received: Optional[Callable[[], None]] = None
         self._lock = threading.Lock()
+        # Multi-file copies being received: group id -> {"n", "paths", "ts",
+        # "timer"}. See _group_arrived.
+        self._groups: Dict[str, dict] = {}
+        self._groups_lock = threading.Lock()
         self._seen: "OrderedDict[str, float]" = OrderedDict()
         self._server: Optional[socket.socket] = None
         self._running = False
@@ -885,11 +916,68 @@ class SyncEngine:
                     self._safe_unlink(tmp)
                     return
                 shutil.move(tmp, dest)
-                storage.add_file_from_path(str(dest), name, mime)
-                clipboard.copy_file(str(dest))
+                group = _group_fields(manifest)
+                if group is None:
+                    storage.add_file_from_path(str(dest), name, mime)
+                    clipboard.copy_file(str(dest))
+                else:
+                    gid, n, pos = group
+                    storage.add_file_from_path(str(dest), name, mime,
+                                               group_id=gid, group_pos=pos)
+                    self._group_arrived(gid, n, pos, str(dest))
+                    return  # _group_arrived injects and notifies
             self._notify_received()
         except Exception:
             self._safe_unlink(tmp)
+
+    def _group_arrived(self, gid: str, n: int, pos: int, path: str) -> None:
+        """One file of a multi-file copy has been stored. Put the group on the
+        clipboard once all ``n`` are in, as one offer, so a paste drops them
+        all. The files stream in parallel, so they finish in any order.
+
+        A member that never comes (refused as too big, a dropped connection)
+        mustn't leave the rest stranded off the clipboard: _GROUP_WAIT after the
+        latest arrival, whatever has arrived goes on the clipboard. A later
+        straggler then puts the fuller set on again."""
+        now = time.time()
+        with self._groups_lock:
+            for stale in [g for g, st in self._groups.items()
+                          if now - st["ts"] > _GROUP_FORGET]:
+                st = self._groups.pop(stale)
+                if st.get("timer"):
+                    st["timer"].cancel()
+            st = self._groups.setdefault(gid, {"n": n, "paths": {}, "timer": None})
+            st["paths"][pos] = path
+            st["ts"] = now
+            if st.get("timer"):
+                st["timer"].cancel()
+                st["timer"] = None
+            complete = len(st["paths"]) >= st["n"]
+            if not complete:
+                t = threading.Timer(_GROUP_WAIT, self._inject_group, args=(gid,))
+                t.daemon = True
+                st["timer"] = t
+                t.start()
+        if complete:
+            self._inject_group(gid)
+
+    def _inject_group(self, gid: str) -> None:
+        from . import clipboard
+        with self._groups_lock:
+            st = self._groups.get(gid)
+            if st is None:
+                return
+            st["timer"] = None
+            paths = [st["paths"][k] for k in sorted(st["paths"])]
+            n = st["n"]
+            if len(paths) >= n:
+                self._groups.pop(gid, None)
+        _log(f"media: group {gid[:8]} on the clipboard ({len(paths)}/{n} files)")
+        try:
+            clipboard.copy_files(paths)
+        except Exception:
+            pass
+        self._notify_received()
 
     @staticmethod
     def _verified_image_mime(data: bytes, mime: str, manifest) -> Optional[str]:
@@ -984,6 +1072,9 @@ class SyncEngine:
         return addrs
 
     def _broadcast_entry(self, entry) -> None:
+        if getattr(entry, "is_group", False):
+            self._broadcast_group(entry)
+            return
         h = getattr(entry, "hash", None)
         if not h or self._seen_has(h):
             return  # just received/sent this — don't echo
@@ -1002,27 +1093,67 @@ class SyncEngine:
                                      args=(addrs, peer, h, payload), daemon=True).start()
             return
         # media (image / file): stream the on-disk blob, capped + integrity-checked.
+        if self._sendable_blob(entry) is None:
+            return
+        self._send_media_entry(entry)
+
+    def _sendable_blob(self, entry):
+        """(blob path, size) when ``entry``'s blob exists and fits the sync
+        size limit, else None."""
         import os
         blob = getattr(entry, "image_path", None)
         if not blob or not os.path.exists(blob):
-            return
+            return None
         size = getattr(entry, "size", 0) or os.path.getsize(blob)
         if size > settings.get("sync_max_bytes"):
-            print(f"[clippy-sync] '{getattr(entry,'filename',None) or kind}' "
+            print(f"[clippy-sync] '{getattr(entry,'filename',None) or entry.kind}' "
                   f"({size} B) exceeds the sync size limit — not sent.")
+            return None
+        return blob, size
+
+    def _send_media_entry(self, entry, group: Optional[dict] = None) -> None:
+        """Stream one image/file entry to every reachable peer. ``group`` adds
+        the multi-file fields (id, size, pos) to its manifest."""
+        import os
+        blob, size = self._sendable_blob(entry) or (None, 0)
+        if blob is None:
             return
         peers = [(self._peer_addrs(pid, peer), peer)
                  for pid, peer in list(self.trusted.items())]
         peers = [(a, p) for a, p in peers if a]
         if not peers:
             return  # nothing paired/reachable -> no transfer, no progress bar
+        h = entry.hash
         mime = getattr(entry, "mime", None) or "application/octet-stream"
         name = _name_with_ext(getattr(entry, "filename", None) or os.path.basename(blob), mime)
-        manifest = {"v": PROTO, "origin": self.device_id, "hash": h, "kind": kind,
+        manifest = {"v": PROTO, "origin": self.device_id, "hash": h, "kind": entry.kind,
                     "mime": mime, "name": name, "size": size}
+        if group:
+            manifest.update(group)
         for addrs, peer in peers:
             threading.Thread(target=self._send_media_to,
                              args=(addrs, peer, blob, manifest, h), daemon=True).start()
+
+    def _broadcast_group(self, entry) -> None:
+        """Send every file of a multi-file copy, tagged so the peer can put them
+        on its clipboard together. A peer older than 1.7 ignores the tags and
+        takes each file as its own clip, as before.
+
+        Members already seen (just received or sent) and ones over the size
+        limit are left out, and ``group_size`` counts only what is sent: the
+        receiver waits for exactly that many."""
+        members = [m for m in storage.group_members(entry)
+                   if m.hash and not self._seen_has(m.hash)
+                   and self._sendable_blob(m) is not None]
+        if not members:
+            return
+        if len(members) == 1:
+            self._send_media_entry(members[0])
+            return
+        gid = entry.group_id
+        for pos, m in enumerate(members):
+            self._send_media_entry(m, {"group": gid, "group_size": len(members),
+                                       "group_pos": pos})
 
     def _deliver_text(self, addrs, peer, h, payload: bytes) -> None:
         """Send one text payload to a peer, retrying across its candidate
