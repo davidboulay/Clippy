@@ -3,6 +3,7 @@
 #
 #   ./packaging/macos/build-app.sh          # -> dist/Clippy.app
 #   ./packaging/macos/build-app.sh --dmg    # also -> dist/Clippy-<ver>.dmg
+#   PYTHON=python3.14 ./packaging/macos/build-app.sh   # pick the interpreter
 #
 # Run this ON A MAC (it needs Apple's toolchain). It creates a throwaway venv,
 # installs the runtime deps + py2app, and bundles everything into the .app, so
@@ -19,8 +20,26 @@ cd "$REPO"
 VERSION="$(sed -n 's/^__version__ *= *"\(.*\)"/\1/p' clippy/__init__.py)"
 VENV="$(mktemp -d)/venv"
 
-echo "==> Building Clippy.app $VERSION"
-python3 -m venv "$VENV"
+# --- interpreter --------------------------------------------------------------
+# The app bundles whichever Python builds it. A pre-release Python is refused:
+# 1.6.7 was built with a 3.15 alpha, py2app did not know its new stdlib
+# extension `_math_integer`, and the app died on every launch with py2app's
+# "Launch error" dialog before any Clippy code ran.
+PYTHON="${PYTHON:-python3}"
+if ! command -v "$PYTHON" >/dev/null; then
+    echo "Python interpreter not found: $PYTHON" >&2
+    exit 1
+fi
+PYVER="$("$PYTHON" -c 'import sys; print("%d.%d.%d-%s" % (sys.version_info[:3] + (sys.version_info.releaselevel,)))')"
+if [[ "$PYVER" != *-final && "${CLIPPY_ALLOW_PRERELEASE_PYTHON:-}" != 1 ]]; then
+    echo "Refusing to build with pre-release Python $PYVER ($(command -v "$PYTHON"))." >&2
+    echo "Use a stable one, e.g.  PYTHON=python3.14 $0" >&2
+    echo "(or set CLIPPY_ALLOW_PRERELEASE_PYTHON=1 to try anyway)" >&2
+    exit 1
+fi
+
+echo "==> Building Clippy.app $VERSION with Python ${PYVER%-final} ($(command -v "$PYTHON"))"
+"$PYTHON" -m venv "$VENV"
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
 pip install --quiet --upgrade pip wheel
@@ -73,6 +92,34 @@ else
         rm -f "$ZIP"
         echo "==> Notarized + stapled."
     fi
+fi
+
+# --- launch smoke test --------------------------------------------------------
+# Start the built app for a few seconds with throwaway data/config dirs (so it
+# never touches the real history, settings or peers) and fail the build if it
+# dies or shows py2app's "Launch error". Skip with CLIPPY_SKIP_SMOKE=1.
+if [[ "${CLIPPY_SKIP_SMOKE:-}" != 1 ]]; then
+    echo "==> Smoke test: launching $APP for ${CLIPPY_SMOKE_SECONDS:-8}s…"
+    SMOKE="$(mktemp -d)"
+    mkdir -p "$SMOKE/data" "$SMOKE/config" "$SMOKE/run"
+    XDG_DATA_HOME="$SMOKE/data" XDG_CONFIG_HOME="$SMOKE/config" XDG_RUNTIME_DIR="$SMOKE/run" \
+        "$APP/Contents/MacOS/Clippy" >"$SMOKE/out.log" 2>&1 &
+    SMOKE_PID=$!
+    sleep "${CLIPPY_SMOKE_SECONDS:-8}"
+    SMOKE_ALIVE=0
+    if kill -0 "$SMOKE_PID" 2>/dev/null; then
+        SMOKE_ALIVE=1
+        kill "$SMOKE_PID" 2>/dev/null || true
+    fi
+    wait "$SMOKE_PID" 2>/dev/null || true
+    if [[ "$SMOKE_ALIVE" != 1 ]] || grep -qE "Launch error|Traceback \(most recent call last\)" "$SMOKE/out.log"; then
+        echo "!! Smoke test FAILED: the built app does not start. Its output:" >&2
+        sed 's/^/   | /' "$SMOKE/out.log" >&2
+        echo "   Do not install this build. Log kept at $SMOKE/out.log" >&2
+        exit 1
+    fi
+    rm -rf "$SMOKE"
+    echo "==> Smoke test passed (app stayed up, no launch error)."
 fi
 
 echo "==> Built $APP"
