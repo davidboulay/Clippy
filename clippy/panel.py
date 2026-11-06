@@ -87,7 +87,6 @@ def _generate_file_thumb(path: str, out: str, mime: str, ext: str) -> bool:
     import shlex
     import shutil
     import subprocess
-    import urllib.request
     try:
         config.THUMB_DIR.mkdir(parents=True, exist_ok=True)
         if mime == "application/pdf" or ext == "pdf":
@@ -103,7 +102,7 @@ def _generate_file_thumb(path: str, out: str, mime: str, ext: str) -> bool:
         tmpl = _thumbnailer_for(mime)
         if not tmpl:
             return False
-        uri = "file://" + urllib.request.pathname2url(path)
+        uri = Path(os.path.abspath(path)).as_uri()
         cmd = [tok.replace("%s", str(_THUMB_PX)).replace("%o", out)
                   .replace("%i", path).replace("%u", uri)
                for tok in shlex.split(tmpl)]
