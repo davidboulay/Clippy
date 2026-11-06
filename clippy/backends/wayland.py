@@ -290,10 +290,20 @@ class WaylandBackend:
             return None
 
     @staticmethod
-    def _file_parts(path: str) -> List[tuple]:
+    def _file_uri(path: str) -> str:
+        """``file:///abs/path`` for a local path.
+
+        Not ``"file://" + pathname2url(path)``: Python 3.14 made pathname2url
+        return ``///abs/path`` for an absolute path, so that concatenation gave
+        ``file://///abs/path``, which file managers don't resolve."""
+        import os
+        from pathlib import Path
+        return Path(os.path.abspath(path)).as_uri()
+
+    @classmethod
+    def _file_parts(cls, path: str) -> List[tuple]:
         """The two flavors a file-drop target understands, for one path."""
-        import urllib.request
-        uri = "file://" + urllib.request.pathname2url(path)
+        uri = cls._file_uri(path)
         return [
             ("text/uri-list", (uri + "\r\n").encode("utf-8")),
             ("x-special/gnome-copied-files", ("copy\n" + uri).encode("utf-8")),
@@ -414,9 +424,7 @@ class WaylandBackend:
                 pass
             if self._x11_owner_is_enough():
                 return
-        import urllib.request
-        uri = urllib.request.pathname2url(path)
-        payload = f"copy\nfile://{uri}".encode("utf-8")
+        uri = self._file_uri(path)
         # Set the Wayland selection too: outside cosmic-comp the owner above
         # covers XWayland only, so without this a pasted file reaches nothing
         # native.
@@ -435,21 +443,22 @@ class WaylandBackend:
         # targets over file-drop targets — so it answers to the same setting,
         # inverted: bytes by default, the file reference when the user has
         # asked for file flavors. XWayland gets both from the owner regardless.
+        #
+        # The file reference goes out as text/uri-list, not GNOME's
+        # x-special/gnome-copied-files: uri-list is the freedesktop flavor every
+        # file manager reads (Nautilus/GTK too), while Dolphin ignores the GNOME
+        # list and offers to save the unknown bytes as a new file instead. That
+        # showed on KWin (CachyOS Plasma), where this path is the whole offer.
         if img is not None and not settings.get("image_file_flavors"):
             wl_type, wl_data = img
         else:
-            wl_type, wl_data = "x-special/gnome-copied-files", payload
+            wl_type, wl_data = "text/uri-list", (uri + "\r\n").encode("utf-8")
         subprocess.run(["wl-copy", "--type", wl_type],
                        input=wl_data, timeout=_WRITE_TIMEOUT)
         if not published:
-            # No owner, so this one-shot mirror is all XWayland gets. Match the
-            # flavor the Wayland side took, except that X11 file targets read a
-            # uri-list rather than the gnome-copied-files list.
-            if wl_type.startswith("image/"):
-                self._x11_mirror(wl_type, wl_data)
-            else:
-                self._x11_mirror("text/uri-list",
-                                 f"file://{uri}\r\n".encode("utf-8"))
+            # No owner, so this one-shot mirror is all XWayland gets: the same
+            # flavor the Wayland side took.
+            self._x11_mirror(wl_type, wl_data)
 
     @staticmethod
     def _image_bytes_for(path: str):

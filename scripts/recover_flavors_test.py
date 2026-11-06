@@ -229,7 +229,7 @@ print("image-file recover off cosmic-comp with image_file_flavors on")
 rec = install(owner_is_enough=False, image_file_flavors=True)
 WaylandBackend().copy_file(str(imgtmp))
 check("the file reference takes the Wayland selection",
-      rec.wl_copy_calls[0], ["wl-copy", "--type", "x-special/gnome-copied-files"])
+      rec.wl_copy_calls[0], ["wl-copy", "--type", "text/uri-list"])
 check("image/png is still on the owner for XWayland",
       "image/png" in [m for m, _ in (rec.parts or [])], True)
 
@@ -239,15 +239,35 @@ WaylandBackend().copy_file(str(imgtmp))
 check("the xclip mirror carries the image, not the uri-list",
       rec.xclip_calls, [("image/png", png)])
 
-print("non-image file recover off cosmic-comp is unchanged")
+print("non-image file recover off cosmic-comp (the Dolphin paste regression)")
 # Only an image file has a second flavor worth preferring; everything else
-# still goes out as the file reference file managers read.
+# goes out as the file reference. It must be text/uri-list: Dolphin ignores
+# x-special/gnome-copied-files and asked for a name to save the bytes as text
+# (KWin, Mac-synced zip, 2026-11-06).
+tmp.write_bytes(b"file contents")
 rec = install(owner_is_enough=False)
 WaylandBackend().copy_file(str(tmp))
-check("still the gnome-copied-files list",
-      rec.wl_copy_calls[0], ["wl-copy", "--type", "x-special/gnome-copied-files"])
-check("and its payload is the copy verb plus the URI",
-      (rec.wl_copy_inputs[0] or b"").startswith(b"copy\nfile://"), True)
+check("the uri-list every file manager reads",
+      rec.wl_copy_calls[0], ["wl-copy", "--type", "text/uri-list"])
+check("and its payload is the file URI",
+      rec.wl_copy_inputs[0], (tmp.as_uri() + "\r\n").encode())
+
+print("file URIs have exactly three slashes")
+# Python 3.14's pathname2url returns "///abs/path"; "file://" + that gave
+# file://///abs/path, which file managers don't resolve.
+spaced = Path("/tmp/clippy recover (1).zip")
+spaced.write_bytes(b"zip")
+uri = WaylandBackend._file_uri(str(spaced))
+check("file:/// prefix, not five slashes", uri.startswith("file:///tmp/"), True)
+check("spaces and parens are escaped", uri, "file:///tmp/clippy%20recover%20%281%29.zip")
+parts = dict(WaylandBackend._file_parts(str(spaced)))
+check("uri-list part", parts["text/uri-list"], (uri + "\r\n").encode())
+check("gnome list part", parts["x-special/gnome-copied-files"], ("copy\n" + uri).encode())
+rec = install(monkeypatch_accept=False, owner_is_enough=False)
+WaylandBackend().copy_file(str(spaced))
+check("no-owner xclip mirror matches the Wayland flavor",
+      rec.xclip_calls, [("text/uri-list", (uri + "\r\n").encode())])
+spaced.unlink(missing_ok=True)
 
 imgtmp.unlink(missing_ok=True)
 tmp.unlink(missing_ok=True)
