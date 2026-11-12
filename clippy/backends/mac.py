@@ -23,6 +23,7 @@ _HTML = "public.html"
 _PNG = "public.png"
 _TIFF = "public.tiff"
 _FILE_URL = "public.file-url"
+_URL = "public.url"
 _FILENAMES = "NSFilenamesPboardType"
 
 
@@ -59,7 +60,7 @@ class MacBackend:
         # TIFF-only case, so callers never get TIFF wearing a PNG label.
         if _PNG in types or _TIFF in types:
             out.append("image/png")
-        if _TEXT in types or self._pb.stringForType_(_TEXT):
+        if _TEXT in types or self._pb.stringForType_(_TEXT) or self._web_url():
             out.append("text/plain")
         if _HTML in types:
             out.append("text/html")
@@ -76,8 +77,17 @@ class MacBackend:
 
     # -- read ------------------------------------------------------------
     def read_text(self, mime: Optional[str] = None) -> str:
-        uti = _HTML if (mime and "html" in mime) else _TEXT
-        return self._pb.stringForType_(uti) or ""
+        if mime and "html" in mime:
+            return self._pb.stringForType_(_HTML) or ""
+        return self._pb.stringForType_(_TEXT) or self._web_url()
+
+    def _web_url(self) -> str:
+        """A link with no plain-text rep, as Universal Clipboard delivers one
+        copied on an iPhone: only ``public.url``. Apps paste it, so history
+        should keep it as text. ``file://`` URLs are file copies and are
+        handled by ``read_file_paths``, never as text."""
+        url = self._pb.stringForType_(_URL) or ""
+        return "" if url.lower().startswith("file:") else url
 
     def read_bytes(self, mime: str) -> bytes:
         """Image bytes in the flavor the caller actually asked for.
